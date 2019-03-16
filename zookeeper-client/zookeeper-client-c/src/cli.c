@@ -650,6 +650,26 @@ void processline(char *line) {
     }
 }
 
+int extractBatchModeCommand(int argc, char **argv, char *cmd) {
+    int cmdsize = sizeof(cmd);
+    if (argc < 3) {
+        return 0;
+    }
+    if(strncmp("cmd:",argv[2],4)==0){
+        size_t cmdlen = strlen(argv[2]) - 4;
+        if (cmdlen >= cmdsize) {
+          fprintf(stderr,
+                  "Command length %zu exceeds max length of %zu\n",
+                  cmdlen,
+                  sizeof(cmd));
+          return -1;
+        }
+        memcpy(cmd, argv[2]+4, cmdlen);
+        return 1;
+     }
+     return 0;
+}
+
 int main(int argc, char **argv) {
 #ifndef THREADED
     fd_set rfds, wfds, efds;
@@ -677,16 +697,10 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (argc > 2) {
-      if(strncmp("cmd:",argv[2],4)==0){
-        size_t cmdlen = strlen(argv[2]) - 4;
-        if (cmdlen >= sizeof(cmd)) {
-          fprintf(stderr,
-                  "Command length %zu exceeds max length of %zu\n",
-                  cmdlen,
-                  sizeof(cmd));
-          return 2;
-        }
-        memcpy(cmd, argv[2]+4, cmdlen);
+      int hasBatchModeCommand = extractBatchModeCommand(argc, argv, cmd);
+      if(hasBatchModeCommand == -1){
+        return 2;
+      } else if (hasBatchModeCommand == 1) {
         batchMode=1;
         fprintf(stderr,"Batch mode: %s\n",cmd);
       }else{
