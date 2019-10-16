@@ -39,6 +39,16 @@ Release notes for Apache Zookeeper releases are available in Jira: [Browse relea
 <a name="news"></a>
 ## News
 
+### 18 Octoer, 2019: release 3.5.6 available
+This is a bugfix release candidate for 3.5.6.
+
+It fixes 29 issues, including upgrade of third party libraries,
+TTL Node APIs for C API, support for PCKS12 Keystores, upgrade of Netty 4 and better procedure for the upgrade of servers from 3.4 to 3.5.
+
+Thanks to the contributors for their tremendous efforts to make this release happen.
+
+See [ZooKeeper 3.5.6 Release Notes](https://zookeeper.apache.org/doc/r3.5.6/releasenotes.html) for details.
+
 ### 20 May, 2019: release 3.5.5 available
 
 First stable version of 3.5 branch. This release is considered to be the successor of 3.4 stable branch and recommended for production use.\
