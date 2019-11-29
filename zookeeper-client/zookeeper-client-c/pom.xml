@@ -54,6 +54,44 @@
   <build>
     <plugins>
         <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-release-plugin</artifactId>
+          <version>2.5.3</version>
+          <configuration>
+            <!-- update the version inside the C sources -->
+            <preparationGoals>antrun:run@replace-cclient-files-during-release scm:add@add-cclient-files-during-release scm:checkin@commit-cclient-files-during-release</preparationGoals>
+            <completionGoals>antrun:run@replace-cclient-files-during-release scm:add@add-cclient-files-during-release scm:checkin@commit-cclient-files-during-release</completionGoals>
+          </configuration>
+        </plugin>
+        <plugin>
+        <artifactId>maven-scm-plugin</artifactId>
+        <executions>
+           <execution>
+             <id>add-cclient-files-during-release</id>
+             <phase>none</phase>
+             <goals>
+               <goal>add</goal>
+             </goals>
+             <configuration>
+                <pushChanges>false</pushChanges>
+                <includes>CMakeLists.txt,configure.ac</includes>
+             </configuration>
+           </execution>
+           <execution>
+              <id>commit-cclient-files-during-release</id>
+              <phase>none</phase>
+              <goals>
+                  <!-- git commit -->
+                 <goal>checkin</goal>
+              </goals>
+              <configuration>
+                 <pushChanges>false</pushChanges>
+                 <message>Released ${project.version}</message>
+              </configuration>
+            </execution>
+        </executions>
+    </plugin>
+        <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
         <executions>
@@ -150,6 +188,25 @@
             <goals>
               <goal>run</goal>
             </goals>
+          </execution>
+          <execution>
+            <id>replace-cclient-files-during-release</id>
+            <phase>none</phase>
+            <goals>
+               <goal>run</goal>
+            </goals>
+            <configuration>
+               <target>
+                  <replaceregexp file="CMakeLists.txt" match="project.*" replace="project(zookeeper VERSION ${project.version})" byline="true" />
+                  <replace file="CMakeLists.txt" value="">
+                      <replaceToken>-SNAPSHOT</replaceToken>
+                  </replace>
+                  <replaceregexp file="configure.ac" match="AC_INIT.*" replace="AC_INIT([zookeeper C client],${project.version},[user@zookeeper.apache.org],[zookeeper])" byline="true" />
+                  <replace file="configure.ac" value="">
+                      <replaceToken>-SNAPSHOT</replaceToken>
+                  </replace>
+               </target>
+            </configuration>
           </execution>
         </executions>
       </plugin>
