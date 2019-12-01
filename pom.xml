@@ -23,7 +23,7 @@
   <parent>
     <groupId>org.apache</groupId>
     <artifactId>apache</artifactId>
-    <version>18</version>
+    <version>21</version>
     <relativePath />
     <!-- no parent resolution -->
   </parent>
@@ -822,8 +822,47 @@
           <consoleOutput>true</consoleOutput>
         </configuration>
       </plugin>
+      <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-release-plugin</artifactId>
+          <inherited>false</inherited>
+          <configuration>
+            <!-- update the version inside the C sources -->
+            <preparationGoals>antrun:run@replace-cclient-files-during-release scm:add@add-cclient-files-during-release scm:checkin@commit-cclient-files-during-release</preparationGoals>
+            <completionGoals>antrun:run@replace-cclient-files-during-release scm:add@add-cclient-files-during-release scm:checkin@commit-cclient-files-during-release</completionGoals>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-scm-plugin</artifactId>
+          <inherited>false</inherited>
+          <executions>
+             <execution>
+               <id>add-cclient-files-during-release</id>
+               <phase>none</phase>
+               <goals>
+                 <goal>add</goal>
+               </goals>
+               <configuration>
+                 <pushChanges>false</pushChanges>
+                 <includes>CMakeLists.txt,configure.ac</includes>
+               </configuration>
+            </execution>
+            <execution>
+               <id>commit-cclient-files-during-release</id>
+               <phase>none</phase>
+               <goals>
+                   <!-- git commit -->
+                <goal>checkin</goal>
+              </goals>
+              <configuration>
+                 <pushChanges>false</pushChanges>
+                 <message>Released ${project.version}</message>
+              </configuration>
+            </execution>
+        </executions>
+      </plugin>
     </plugins>
-
     <resources>
       <resource>
         <directory>${project.basedir}src/main/java/resources</directory>

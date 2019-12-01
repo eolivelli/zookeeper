@@ -54,44 +54,6 @@
   <build>
     <plugins>
         <plugin>
-          <groupId>org.apache.maven.plugins</groupId>
-          <artifactId>maven-release-plugin</artifactId>
-          <version>2.5.3</version>
-          <configuration>
-            <!-- update the version inside the C sources -->
-            <preparationGoals>antrun:run@replace-cclient-files-during-release scm:add@add-cclient-files-during-release scm:checkin@commit-cclient-files-during-release</preparationGoals>
-            <completionGoals>antrun:run@replace-cclient-files-during-release scm:add@add-cclient-files-during-release scm:checkin@commit-cclient-files-during-release</completionGoals>
-          </configuration>
-        </plugin>
-        <plugin>
-        <artifactId>maven-scm-plugin</artifactId>
-        <executions>
-           <execution>
-             <id>add-cclient-files-during-release</id>
-             <phase>none</phase>
-             <goals>
-               <goal>add</goal>
-             </goals>
-             <configuration>
-                <pushChanges>false</pushChanges>
-                <includes>CMakeLists.txt,configure.ac</includes>
-             </configuration>
-           </execution>
-           <execution>
-              <id>commit-cclient-files-during-release</id>
-              <phase>none</phase>
-              <goals>
-                  <!-- git commit -->
-                 <goal>checkin</goal>
-              </goals>
-              <configuration>
-                 <pushChanges>false</pushChanges>
-                 <message>Released ${project.version}</message>
-              </configuration>
-            </execution>
-        </executions>
-    </plugin>
-        <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
         <executions>
