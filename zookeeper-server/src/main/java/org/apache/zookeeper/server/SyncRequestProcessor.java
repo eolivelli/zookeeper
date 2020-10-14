@@ -178,7 +178,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUE_TIME.add(startProcessTime - si.syncQueueStartTime);
 
                 // track the number of records written to the log
-                if (zks.getZKDatabase().append(si)) {
+                if (!si.isThrottled() && zks.getZKDatabase().append(si)) {
                     if (shouldSnapshot()) {
                         resetSnapshotStats();
                         // roll the log
@@ -202,9 +202,8 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                     }
                 } else if (toFlush.isEmpty()) {
                     // optimization for read heavy workloads
-                    // iff this is a read, and there are no pending
-                    // flushes (writes), then just pass this to the next
-                    // processor
+                    // iff this is a read or a throttled request(which doesn't need to be written to the disk),
+                    // and there are no pending flushes (writes), then just pass this to the next processor
                     if (nextProcessor != null) {
                         nextProcessor.processRequest(si);
                         if (nextProcessor instanceof Flushable) {
@@ -248,8 +247,8 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
             if (this.nextProcessor instanceof Flushable) {
                 ((Flushable) this.nextProcessor).flush();
             }
-            lastFlushTime = Time.currentElapsedTime();
         }
+        lastFlushTime = Time.currentElapsedTime();
     }
 
     public void shutdown() {
@@ -259,7 +258,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
             this.join();
             this.flush();
         } catch (InterruptedException e) {
-            LOG.warn("Interrupted while wating for " + this + " to finish");
+            LOG.warn("Interrupted while wating for {} to finish", this);
             Thread.currentThread().interrupt();
         } catch (IOException e) {
             LOG.warn("Got IO exception during shutdown");

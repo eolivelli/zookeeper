@@ -41,7 +41,7 @@ import org.apache.zookeeper.common.PathUtils;
 import org.apache.zookeeper.server.admin.JettyAdminServer;
 import org.apache.zookeeper.test.ClientBase;
 import org.apache.zookeeper.test.QuorumBase;
-import org.junit.After;
+import org.junit.jupiter.api.AfterEach;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,7 +58,7 @@ public class QuorumPeerTestBase extends ZKTestCase implements Watcher {
     protected Servers servers;
     protected int numServers = 0;
 
-    @After
+    @AfterEach
     public void tearDown() throws Exception {
         if (servers == null || servers.mt == null) {
             LOG.info("No servers to shutdown!");
@@ -119,7 +119,7 @@ public class QuorumPeerTestBase extends ZKTestCase implements Watcher {
             this.clientPort = clientPort;
             this.quorumCfgSection = quorumCfgSection;
             this.otherConfigs = otherConfigs;
-            LOG.info("id = " + myid + " tmpDir = " + baseDir + " clientPort = " + clientPort);
+            LOG.info("id = {} tmpDir = {} clientPort = {}", myid, baseDir, clientPort);
             confFile = new File(baseDir, "zoo.cfg");
 
             FileWriter fwriter = new FileWriter(confFile);
@@ -202,10 +202,7 @@ public class QuorumPeerTestBase extends ZKTestCase implements Watcher {
 
         public MainThread(int myid, int clientPort, int adminServerPort, Integer secureClientPort, String quorumCfgSection, String configs, String peerType, boolean writeDynamicConfigFile, String version) throws IOException {
             tmpDir = ClientBase.createTmpDir();
-            LOG.info("id = " + myid
-                     + " tmpDir = " + tmpDir
-                     + " clientPort = " + clientPort
-                     + " adminServerPort = " + adminServerPort);
+            LOG.info("id = {} tmpDir = {} clientPort = {} adminServerPort = {}", myid, tmpDir, clientPort, adminServerPort);
 
             File dataDir = new File(tmpDir, "data");
             if (!dataDir.mkdir()) {
@@ -441,34 +438,65 @@ public class QuorumPeerTestBase extends ZKTestCase implements Watcher {
         public int findLeader() {
             for (int i = 0; i < mt.length; i++) {
                 if (mt[i].main.quorumPeer.leader != null) {
+                    LOG.info("Leader is {}", i);
                     return i;
                 }
             }
+            LOG.info("Cannot find Leader");
             return -1;
         }
 
+        public int findAnyFollower() {
+            for (int i = 0; i < mt.length; i++) {
+                if (mt[i].main.quorumPeer.follower != null) {
+                    LOG.info("Follower is {}", i);
+                    return i;
+                }
+            }
+            LOG.info("Cannot find any follower");
+            return -1;
+        }
+
+        public int findAnyObserver() {
+            for (int i = 0; i < mt.length; i++) {
+                if (mt[i].main.quorumPeer.observer != null) {
+                    LOG.info("Observer is {}", i);
+                    return i;
+                }
+            }
+            LOG.info("Cannot find any observer");
+            return -1;
+        }
     }
 
     protected Servers LaunchServers(int numServers) throws IOException, InterruptedException {
         return LaunchServers(numServers, null);
     }
 
+    protected Servers LaunchServers(int numServers, Integer tickTime) throws IOException, InterruptedException {
+        return LaunchServers(numServers, 0, tickTime);
+    }
+
     /** * This is a helper function for launching a set of servers
      *
-     * @param numServers the number of servers
+     * @param numServers the number of participant servers
+     * @param numObserver the number of observer servers
      * @param tickTime A ticktime to pass to MainThread
      * @return
      * @throws IOException
      * @throws InterruptedException
      */
-    protected Servers LaunchServers(int numServers, Integer tickTime) throws IOException, InterruptedException {
-        int SERVER_COUNT = numServers;
+    protected Servers LaunchServers(int numServers, int numObservers, Integer tickTime) throws IOException, InterruptedException {
+        int SERVER_COUNT = numServers + numObservers;
         QuorumPeerMainTest.Servers svrs = new QuorumPeerMainTest.Servers();
         svrs.clientPorts = new int[SERVER_COUNT];
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < SERVER_COUNT; i++) {
             svrs.clientPorts[i] = PortAssignment.unique();
-            sb.append("server." + i + "=127.0.0.1:" + PortAssignment.unique() + ":" + PortAssignment.unique() + ";" + svrs.clientPorts[i] + "\n");
+            String role = i < numServers ? "participant" : "observer";
+            sb.append(String.format("server.%d=127.0.0.1:%d:%d:%s;127.0.0.1:%d\n",
+                    i, PortAssignment.unique(), PortAssignment.unique(), role,
+                    svrs.clientPorts[i]));
         }
         String quorumCfgSection = sb.toString();
 

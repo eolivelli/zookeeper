@@ -46,6 +46,7 @@ import org.apache.zookeeper.common.PathUtils;
 import org.apache.zookeeper.common.StringUtils;
 import org.apache.zookeeper.metrics.impl.DefaultMetricsProvider;
 import org.apache.zookeeper.server.ZooKeeperServer;
+import org.apache.zookeeper.server.auth.ProviderRegistry;
 import org.apache.zookeeper.server.quorum.QuorumPeer.LearnerType;
 import org.apache.zookeeper.server.quorum.QuorumPeer.QuorumServer;
 import org.apache.zookeeper.server.quorum.auth.QuorumAuth;
@@ -119,6 +120,15 @@ public class QuorumPeerConfig {
     protected String quorumLearnerLoginContext = QuorumAuth.QUORUM_LEARNER_SASL_LOGIN_CONTEXT_DFAULT_VALUE;
     protected String quorumServerLoginContext = QuorumAuth.QUORUM_SERVER_SASL_LOGIN_CONTEXT_DFAULT_VALUE;
     protected int quorumCnxnThreadsSize;
+
+    // multi address related configs
+    private boolean multiAddressEnabled = Boolean.parseBoolean(
+        System.getProperty(QuorumPeer.CONFIG_KEY_MULTI_ADDRESS_ENABLED, QuorumPeer.CONFIG_DEFAULT_MULTI_ADDRESS_ENABLED));
+    private boolean multiAddressReachabilityCheckEnabled =
+        Boolean.parseBoolean(System.getProperty(QuorumPeer.CONFIG_KEY_MULTI_ADDRESS_REACHABILITY_CHECK_ENABLED, "true"));
+    private int multiAddressReachabilityCheckTimeoutMs =
+        Integer.parseInt(System.getProperty(QuorumPeer.CONFIG_KEY_MULTI_ADDRESS_REACHABILITY_CHECK_TIMEOUT_MS,
+                                            String.valueOf(MultipleAddresses.DEFAULT_TIMEOUT.toMillis())));
 
     /**
      * Minimum snapshot retain count.
@@ -283,9 +293,9 @@ public class QuorumPeerConfig {
             } else if (key.equals("clientPort")) {
                 clientPort = Integer.parseInt(value);
             } else if (key.equals("localSessionsEnabled")) {
-                localSessionsEnabled = Boolean.parseBoolean(value);
+                localSessionsEnabled = parseBoolean(key, value);
             } else if (key.equals("localSessionsUpgradingEnabled")) {
-                localSessionsUpgradingEnabled = Boolean.parseBoolean(value);
+                localSessionsUpgradingEnabled = parseBoolean(key, value);
             } else if (key.equals("clientPortAddress")) {
                 clientPortAddress = value.trim();
             } else if (key.equals("secureClientPort")) {
@@ -312,11 +322,11 @@ public class QuorumPeerConfig {
                 connectToLearnerMasterLimit = Integer.parseInt(value);
             } else if (key.equals("electionAlg")) {
                 electionAlg = Integer.parseInt(value);
-                if (electionAlg != 1 && electionAlg != 2 && electionAlg != 3) {
-                    throw new ConfigException("Invalid electionAlg value. Only 1, 2, 3 are supported.");
+                if (electionAlg != 3) {
+                    throw new ConfigException("Invalid electionAlg value. Only 3 is supported.");
                 }
             } else if (key.equals("quorumListenOnAllIPs")) {
-                quorumListenOnAllIPs = Boolean.parseBoolean(value);
+                quorumListenOnAllIPs = parseBoolean(key, value);
             } else if (key.equals("peerType")) {
                 if (value.toLowerCase().equals("observer")) {
                     peerType = LearnerType.OBSERVER;
@@ -326,7 +336,7 @@ public class QuorumPeerConfig {
                     throw new ConfigException("Unrecognised peertype: " + value);
                 }
             } else if (key.equals("syncEnabled")) {
-                syncEnabled = Boolean.parseBoolean(value);
+                syncEnabled = parseBoolean(key, value);
             } else if (key.equals("dynamicConfigFile")) {
                 dynamicConfigFileStr = value;
             } else if (key.equals("autopurge.snapRetainCount")) {
@@ -334,40 +344,24 @@ public class QuorumPeerConfig {
             } else if (key.equals("autopurge.purgeInterval")) {
                 purgeInterval = Integer.parseInt(value);
             } else if (key.equals("standaloneEnabled")) {
-                if (value.toLowerCase().equals("true")) {
-                    setStandaloneEnabled(true);
-                } else if (value.toLowerCase().equals("false")) {
-                    setStandaloneEnabled(false);
-                } else {
-                    throw new ConfigException("Invalid option "
-                                              + value
-                                              + " for standalone mode. Choose 'true' or 'false.'");
-                }
+                setStandaloneEnabled(parseBoolean(key, value));
             } else if (key.equals("reconfigEnabled")) {
-                if (value.toLowerCase().equals("true")) {
-                    setReconfigEnabled(true);
-                } else if (value.toLowerCase().equals("false")) {
-                    setReconfigEnabled(false);
-                } else {
-                    throw new ConfigException("Invalid option "
-                                              + value
-                                              + " for reconfigEnabled flag. Choose 'true' or 'false.'");
-                }
+                setReconfigEnabled(parseBoolean(key, value));
             } else if (key.equals("sslQuorum")) {
-                sslQuorum = Boolean.parseBoolean(value);
+                sslQuorum = parseBoolean(key, value);
             } else if (key.equals("portUnification")) {
-                shouldUsePortUnification = Boolean.parseBoolean(value);
+                shouldUsePortUnification = parseBoolean(key, value);
             } else if (key.equals("sslQuorumReloadCertFiles")) {
-                sslQuorumReloadCertFiles = Boolean.parseBoolean(value);
+                sslQuorumReloadCertFiles = parseBoolean(key, value);
             } else if ((key.startsWith("server.") || key.startsWith("group") || key.startsWith("weight"))
                        && zkProp.containsKey("dynamicConfigFile")) {
                 throw new ConfigException("parameter: " + key + " must be in a separate dynamic config file");
             } else if (key.equals(QuorumAuth.QUORUM_SASL_AUTH_ENABLED)) {
-                quorumEnableSasl = Boolean.parseBoolean(value);
+                quorumEnableSasl = parseBoolean(key, value);
             } else if (key.equals(QuorumAuth.QUORUM_SERVER_SASL_AUTH_REQUIRED)) {
-                quorumServerRequireSasl = Boolean.parseBoolean(value);
+                quorumServerRequireSasl = parseBoolean(key, value);
             } else if (key.equals(QuorumAuth.QUORUM_LEARNER_SASL_AUTH_REQUIRED)) {
-                quorumLearnerRequireSasl = Boolean.parseBoolean(value);
+                quorumLearnerRequireSasl = parseBoolean(key, value);
             } else if (key.equals(QuorumAuth.QUORUM_LEARNER_SASL_LOGIN_CONTEXT)) {
                 quorumLearnerLoginContext = value;
             } else if (key.equals(QuorumAuth.QUORUM_SERVER_SASL_LOGIN_CONTEXT)) {
@@ -383,12 +377,18 @@ public class QuorumPeerConfig {
             } else if (key.equals(JvmPauseMonitor.SLEEP_TIME_MS_KEY)) {
                 jvmPauseSleepTimeMs = Long.parseLong(value);
             } else if (key.equals(JvmPauseMonitor.JVM_PAUSE_MONITOR_FEATURE_SWITCH_KEY)) {
-                jvmPauseMonitorToRun = Boolean.parseBoolean(value);
+                jvmPauseMonitorToRun = parseBoolean(key, value);
             } else if (key.equals("metricsProvider.className")) {
                 metricsProviderClassName = value;
             } else if (key.startsWith("metricsProvider.")) {
                 String keyForMetricsProvider = key.substring(16);
                 metricsProviderConfiguration.put(keyForMetricsProvider, value);
+            } else if (key.equals("multiAddress.enabled")) {
+                multiAddressEnabled = parseBoolean(key, value);
+            } else if (key.equals("multiAddress.reachabilityCheckTimeoutMs")) {
+                multiAddressReachabilityCheckTimeoutMs = Integer.parseInt(value);
+            } else if (key.equals("multiAddress.reachabilityCheckEnabled")) {
+                multiAddressReachabilityCheckEnabled = parseBoolean(key, value);
             } else {
                 System.setProperty("zookeeper." + key, value);
             }
@@ -506,11 +506,12 @@ public class QuorumPeerConfig {
      */
     public static void configureSSLAuth() throws ConfigException {
         try (ClientX509Util clientX509Util = new ClientX509Util()) {
-            String sslAuthProp = "zookeeper.authProvider."
+            String sslAuthProp = ProviderRegistry.AUTHPROVIDER_PROPERTY_PREFIX
                                  + System.getProperty(clientX509Util.getSslAuthProviderProperty(), "x509");
             if (System.getProperty(sslAuthProp) == null) {
-                if ("zookeeper.authProvider.x509".equals(sslAuthProp)) {
-                    System.setProperty("zookeeper.authProvider.x509", "org.apache.zookeeper.server.auth.X509AuthenticationProvider");
+                if ((ProviderRegistry.AUTHPROVIDER_PROPERTY_PREFIX + "x509").equals(sslAuthProp)) {
+                    System.setProperty(ProviderRegistry.AUTHPROVIDER_PROPERTY_PREFIX + "x509",
+                        "org.apache.zookeeper.server.auth.X509AuthenticationProvider");
                 } else {
                     throw new ConfigException("No auth provider configured for the SSL authentication scheme '"
                                               + System.getProperty(clientX509Util.getSslAuthProviderProperty())
@@ -641,7 +642,7 @@ public class QuorumPeerConfig {
             try {
                 f.delete();
             } catch (Exception e) {
-                LOG.warn("deleting " + filename + " failed");
+                LOG.warn("deleting {} failed", filename);
             }
         }
     }
@@ -709,7 +710,7 @@ public class QuorumPeerConfig {
         } else {
             if (warnings) {
                 if (numParticipators <= 2) {
-                    LOG.warn("No server failure will be tolerated. " + "You need at least 3 servers.");
+                    LOG.warn("No server failure will be tolerated. You need at least 3 servers.");
                 } else if (numParticipators % 2 == 0) {
                     LOG.warn("Non-optimial configuration, consider an odd number of servers.");
                 }
@@ -774,9 +775,10 @@ public class QuorumPeerConfig {
             ? LearnerType.OBSERVER
             : LearnerType.PARTICIPANT;
         if (roleByServersList != peerType) {
-            LOG.warn("Peer type from servers list (" + roleByServersList
-                     + ") doesn't match peerType (" + peerType
-                     + "). Defaulting to servers list.");
+            LOG.warn(
+                "Peer type from servers list ({}) doesn't match peerType ({}). Defaulting to servers list.",
+                roleByServersList,
+                peerType);
 
             peerType = roleByServersList;
         }
@@ -925,6 +927,18 @@ public class QuorumPeerConfig {
         return quorumListenOnAllIPs;
     }
 
+    public boolean isMultiAddressEnabled() {
+        return multiAddressEnabled;
+    }
+
+    public boolean isMultiAddressReachabilityCheckEnabled() {
+        return multiAddressReachabilityCheckEnabled;
+    }
+
+    public int getMultiAddressReachabilityCheckTimeoutMs() {
+        return multiAddressReachabilityCheckTimeoutMs;
+    }
+
     public static boolean isStandaloneEnabled() {
         return standaloneEnabled;
     }
@@ -941,4 +955,17 @@ public class QuorumPeerConfig {
         reconfigEnabled = enabled;
     }
 
+    private boolean parseBoolean(String key, String value) throws ConfigException {
+        if (value.equalsIgnoreCase("true")) {
+            return true;
+        } else if (value.equalsIgnoreCase("false")) {
+            return false;
+        } else {
+            throw new ConfigException("Invalid option "
+                                      + value
+                                      + " for "
+                                      + key
+                                      + ". Choose 'true' or 'false.'");
+        }
+    }
 }

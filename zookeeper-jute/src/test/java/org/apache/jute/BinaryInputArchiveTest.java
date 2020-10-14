@@ -18,14 +18,17 @@
 
 package org.apache.jute;
 
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 // TODO: introduce JuteTestCase as in ZKTestCase
 
@@ -44,8 +47,8 @@ public class BinaryInputArchiveTest {
             ia.readString("");
             fail("Should have thrown an IOException");
         } catch (IOException e) {
-            assertTrue("Not 'Unreasonable length' exception: " + e,
-                    e.getMessage().startsWith(BinaryInputArchive.UNREASONBLE_LENGTH));
+            assertTrue(e.getMessage().startsWith(BinaryInputArchive.UNREASONBLE_LENGTH),
+                    () -> "Not 'Unreasonable length' exception: " + e);
         }
     }
 
@@ -137,5 +140,59 @@ public class BinaryInputArchiveTest {
                 }
         );
     }
+  /**
+   * Record length is more than the maxbuffer + extrasize length.
+   */
+  @Test
+  public void testReadStringForRecordsHavingLengthMoreThanMaxAllowedSize() {
+    int maxBufferSize = 2000;
+    int extraMaxBufferSize = 1025;
+    //this record size is more than the max allowed size
+    int recordSize = maxBufferSize + extraMaxBufferSize + 100;
+    BinaryInputArchive ia =
+        getBinaryInputArchive(recordSize, maxBufferSize, extraMaxBufferSize);
+    try {
+      ia.readString("");
+      fail("Should have thrown an IOException");
+    } catch (IOException e) {
+      assertTrue(e.getMessage().startsWith(BinaryInputArchive.UNREASONBLE_LENGTH),
+              () -> "Not 'Unreasonable length' exception: " + e);
+    }
+  }
+
+  /**
+   * Record length is less than then maxbuffer + extrasize length.
+   */
+  @Test
+  public void testReadStringForRecordsHavingLengthLessThanMaxAllowedSize()
+      throws IOException {
+    int maxBufferSize = 2000;
+    int extraMaxBufferSize = 1025;
+    int recordSize = maxBufferSize + extraMaxBufferSize - 100;
+    //Exception is not expected as record size is less than the allowed size
+    BinaryInputArchive ia =
+        getBinaryInputArchive(recordSize, maxBufferSize, extraMaxBufferSize);
+    String s = ia.readString("");
+    assertNotNull(s);
+    assertEquals(recordSize, s.getBytes().length);
+  }
+
+  private BinaryInputArchive getBinaryInputArchive(int recordSize, int maxBufferSize,
+      int extraMaxBufferSize) {
+    byte[] data = getData(recordSize);
+    DataInputStream dis = new DataInputStream(new ByteArrayInputStream(data));
+    return new BinaryInputArchive(dis, maxBufferSize, extraMaxBufferSize);
+  }
+
+  private byte[] getData(int recordSize) {
+    ByteBuffer buf = ByteBuffer.allocate(recordSize + 4);
+    buf.putInt(recordSize);
+    byte[] bytes = new byte[recordSize];
+    for (int i = 0; i < recordSize; i++) {
+      bytes[i] = (byte) 'a';
+    }
+    buf.put(bytes);
+    return buf.array();
+  }
 
 }

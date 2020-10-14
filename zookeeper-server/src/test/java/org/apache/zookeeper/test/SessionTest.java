@@ -19,10 +19,10 @@
 package org.apache.zookeeper.test;
 
 import static org.apache.zookeeper.test.ClientBase.CONNECTION_TIMEOUT;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.File;
 import java.io.IOException;
 import java.util.LinkedList;
@@ -43,9 +43,9 @@ import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.Stat;
 import org.apache.zookeeper.server.ServerCnxnFactory;
 import org.apache.zookeeper.server.ZooKeeperServer;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,7 +64,7 @@ public class SessionTest extends ZKTestCase {
 
     private final int TICK_TIME = 3000;
 
-    @Before
+    @BeforeEach
     public void setUp() throws Exception {
         if (tmpDir == null) {
             tmpDir = ClientBase.createTmpDir();
@@ -77,14 +77,14 @@ public class SessionTest extends ZKTestCase {
         serverFactory = ServerCnxnFactory.createFactory(PORT, -1);
         serverFactory.startup(zs);
 
-        assertTrue("waiting for server up", ClientBase.waitForServerUp(HOSTPORT, CONNECTION_TIMEOUT));
+        assertTrue(ClientBase.waitForServerUp(HOSTPORT, CONNECTION_TIMEOUT), "waiting for server up");
     }
 
-    @After
+    @AfterEach
     public void tearDown() throws Exception {
         serverFactory.shutdown();
         zs.shutdown();
-        assertTrue("waiting for server down", ClientBase.waitForServerDown(HOSTPORT, CONNECTION_TIMEOUT));
+        assertTrue(ClientBase.waitForServerDown(HOSTPORT, CONNECTION_TIMEOUT), "waiting for server down");
     }
 
     private static class CountdownWatcher implements Watcher {
@@ -157,7 +157,7 @@ public class SessionTest extends ZKTestCase {
             this.name = name;
         }
         public void process(WatchedEvent event) {
-            LOG.info(name + " event:" + event.getState() + " " + event.getType() + " " + event.getPath());
+            LOG.info("{} event:{} {} {}", name, event.getState(), event.getType(), event.getPath());
             if (event.getState() == KeeperState.SyncConnected && startSignal != null && startSignal.getCount() > 0) {
                 startSignal.countDown();
             }
@@ -174,7 +174,7 @@ public class SessionTest extends ZKTestCase {
     public void testSession() throws IOException, InterruptedException, KeeperException {
         DisconnectableZooKeeper zk = createClient();
         zk.create("/e", new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
-        LOG.info("zk with session id 0x" + Long.toHexString(zk.getSessionId()) + " was destroyed!");
+        LOG.info("zk with session id 0x{} was destroyed!", Long.toHexString(zk.getSessionId()));
 
         // disconnect the client by killing the socket, not sending the
         // session disconnect to the server as usual. This allows the test
@@ -186,14 +186,14 @@ public class SessionTest extends ZKTestCase {
         zk = new DisconnectableZooKeeper(HOSTPORT, CONNECTION_TIMEOUT, new MyWatcher("testSession"), zk.getSessionId(), zk.getSessionPasswd());
         startSignal.await();
 
-        LOG.info("zk with session id 0x" + Long.toHexString(zk.getSessionId()) + " was created!");
+        LOG.info("zk with session id 0x{} was created!", Long.toHexString(zk.getSessionId()));
         zk.getData("/e", false, stat);
         LOG.info("After get data /e");
         zk.close();
 
         zk = createClient();
         assertEquals(null, zk.exists("/e", false));
-        LOG.info("before close zk with session id 0x" + Long.toHexString(zk.getSessionId()) + "!");
+        LOG.info("before close zk with session id 0x{}!", Long.toHexString(zk.getSessionId()));
         zk.close();
         try {
             zk.getData("/e", false, stat);
@@ -245,12 +245,10 @@ public class SessionTest extends ZKTestCase {
                             + 1)), zk.getSessionId(), zk.getSessionPasswd());
             final int[] result = new int[1];
             result[0] = Integer.MAX_VALUE;
-            zknew.sync("/", new AsyncCallback.VoidCallback() {
-                public void processResult(int rc, String path, Object ctx) {
-                    synchronized (result) {
-                        result[0] = rc;
-                        result.notify();
-                    }
+            zknew.sync("/", (rc, path, ctx) -> {
+                synchronized (result) {
+                    result[0] = rc;
+                    result.notify();
                 }
             }, null);
             synchronized (result) {
@@ -258,7 +256,7 @@ public class SessionTest extends ZKTestCase {
                     result.wait(5000);
                 }
             }
-            LOG.info(hostPorts[(i + 1) % hostPorts.length] + " Sync returned " + result[0]);
+            LOG.info("{} Sync returned {}", hostPorts[(i + 1) % hostPorts.length], result[0]);
             assertTrue(result[0] == KeeperException.Code.OK.intValue());
             zknew.setData("/", new byte[1], -1);
             try {

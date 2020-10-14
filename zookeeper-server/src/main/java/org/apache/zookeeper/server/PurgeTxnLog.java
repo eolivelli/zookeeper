@@ -30,6 +30,7 @@ import java.util.Set;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.apache.zookeeper.server.persistence.FileTxnSnapLog;
 import org.apache.zookeeper.server.persistence.Util;
+import org.apache.zookeeper.util.ServiceUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -78,7 +79,7 @@ public class PurgeTxnLog {
 
         FileTxnSnapLog txnLog = new FileTxnSnapLog(dataDir, snapDir);
 
-        List<File> snaps = txnLog.findNRecentSnapshots(num);
+        List<File> snaps = txnLog.findNValidSnapshots(num);
         int numSnaps = snaps.size();
         if (numSnaps > 0) {
             purgeOlderSnapshots(txnLog, snaps.get(numSnaps - 1));
@@ -148,12 +149,14 @@ public class PurgeTxnLog {
 
         // remove the old files
         for (File f : files) {
-            final String msg = "Removing file: "
-                               + DateFormat.getDateTimeInstance().format(f.lastModified())
-                               + "\t"
-                               + f.getPath();
+            final String msg = String.format(
+                "Removing file: %s\t%s",
+                DateFormat.getDateTimeInstance().format(f.lastModified()),
+                f.getPath());
+
             LOG.info(msg);
             System.out.println(msg);
+
             if (!f.delete()) {
                 System.err.println("Failed to remove " + f.getPath());
             }
@@ -228,7 +231,7 @@ public class PurgeTxnLog {
 
     private static void printUsageThenExit() {
         printUsage();
-        System.exit(ExitCode.UNEXPECTED_ERROR.getValue());
+        ServiceUtils.requestSystemExit(ExitCode.UNEXPECTED_ERROR.getValue());
     }
 
 }

@@ -18,11 +18,11 @@
 
 package org.apache.zookeeper.server.admin;
 
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import java.io.IOException;
@@ -33,10 +33,11 @@ import java.util.Map;
 import org.apache.zookeeper.metrics.MetricsUtils;
 import org.apache.zookeeper.server.ServerCnxnFactory;
 import org.apache.zookeeper.server.ServerStats;
+import org.apache.zookeeper.server.ZKDatabase;
 import org.apache.zookeeper.server.ZooKeeperServer;
 import org.apache.zookeeper.server.quorum.BufferStats;
 import org.apache.zookeeper.test.ClientBase;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class CommandsTest extends ClientBase {
 
@@ -62,30 +63,20 @@ public class CommandsTest extends ClientBase {
         // This is only true because we're setting cmdName to the primary name
         assertEquals(cmdName, result.remove("command"));
         assertTrue(result.containsKey("error"));
-        assertNull("error: " + result.get("error"), result.remove("error"));
+        assertNull(result.remove("error"), "error: " + result.get("error"));
 
         for (Field field : fields) {
             String k = field.key;
-            assertTrue("Result from command "
-                               + cmdName
-                               + " missing field \""
-                               + k
-                               + "\""
-                               + "\n"
-                               + result, result.containsKey(k));
+            assertTrue(result.containsKey(k),
+                    "Result from command " + cmdName + " missing field \"" + k + "\"" + "\n" + result);
             Class<?> t = field.type;
             Object v = result.remove(k);
-            assertTrue("\""
-                               + k
-                               + "\" field from command "
-                               + cmdName
-                               + " should be of type "
-                               + t
-                               + ", is actually of type "
-                               + v.getClass(), t.isAssignableFrom(v.getClass()));
+            assertTrue(t.isAssignableFrom(v.getClass()),
+                    "\"" + k + "\" field from command " + cmdName
+                            + " should be of type " + t + ", is actually of type " + v.getClass());
         }
 
-        assertTrue("Result from command " + cmdName + " contains extra fields: " + result, result.isEmpty());
+        assertTrue(result.isEmpty(), "Result from command " + cmdName + " contains extra fields: " + result);
     }
 
     public void testCommand(String cmdName, Field... fields) throws IOException, InterruptedException {
@@ -155,7 +146,31 @@ public class CommandsTest extends ClientBase {
 
     @Test
     public void testMonitor() throws IOException, InterruptedException {
-        ArrayList<Field> fields = new ArrayList<>(Arrays.asList(new Field("version", String.class), new Field("avg_latency", Double.class), new Field("max_latency", Long.class), new Field("min_latency", Long.class), new Field("packets_received", Long.class), new Field("packets_sent", Long.class), new Field("num_alive_connections", Integer.class), new Field("outstanding_requests", Long.class), new Field("server_state", String.class), new Field("znode_count", Integer.class), new Field("watch_count", Integer.class), new Field("ephemerals_count", Integer.class), new Field("approximate_data_size", Long.class), new Field("open_file_descriptor_count", Long.class), new Field("max_file_descriptor_count", Long.class), new Field("last_client_response_size", Integer.class), new Field("max_client_response_size", Integer.class), new Field("min_client_response_size", Integer.class), new Field("uptime", Long.class), new Field("global_sessions", Long.class), new Field("local_sessions", Long.class), new Field("connection_drop_probability", Double.class)));
+        ArrayList<Field> fields = new ArrayList<>(Arrays.asList(
+                new Field("version", String.class),
+                new Field("avg_latency", Double.class),
+                new Field("max_latency", Long.class),
+                new Field("min_latency", Long.class),
+                new Field("packets_received", Long.class),
+                new Field("packets_sent", Long.class),
+                new Field("num_alive_connections", Integer.class),
+                new Field("outstanding_requests", Long.class),
+                new Field("server_state", String.class),
+                new Field("znode_count", Integer.class),
+                new Field("watch_count", Integer.class),
+                new Field("ephemerals_count", Integer.class),
+                new Field("approximate_data_size", Long.class),
+                new Field("open_file_descriptor_count", Long.class),
+                new Field("max_file_descriptor_count", Long.class),
+                new Field("last_client_response_size", Integer.class),
+                new Field("max_client_response_size", Integer.class),
+                new Field("min_client_response_size", Integer.class),
+                new Field("uptime", Long.class),
+                new Field("global_sessions", Long.class),
+                new Field("local_sessions", Long.class),
+                new Field("connection_drop_probability", Double.class),
+                new Field("outstanding_tls_handshake", Integer.class)
+        ));
         Map<String, Object> metrics = MetricsUtils.currentServerMetrics();
 
         for (String metric : metrics.keySet()) {
@@ -195,7 +210,14 @@ public class CommandsTest extends ClientBase {
 
     @Test
     public void testStat() throws IOException, InterruptedException {
-        testCommand("stats", new Field("version", String.class), new Field("read_only", Boolean.class), new Field("server_stats", ServerStats.class), new Field("node_count", Integer.class), new Field("connections", Iterable.class), new Field("client_response", BufferStats.class));
+        testCommand("stats",
+                    new Field("version", String.class),
+                    new Field("read_only", Boolean.class),
+                    new Field("server_stats", ServerStats.class),
+                    new Field("node_count", Integer.class),
+                    new Field("connections", Iterable.class),
+                    new Field("secure_connections", Iterable.class),
+                    new Field("client_response", BufferStats.class));
     }
 
     @Test
@@ -219,6 +241,12 @@ public class CommandsTest extends ClientBase {
     }
 
     @Test
+    public void testVotingViewCommand() throws IOException, InterruptedException {
+        testCommand("voting_view",
+                    new Field("current_config", Map.class));
+    }
+
+    @Test
     public void testConsCommandSecureOnly() {
         // Arrange
         Commands.ConsCommand cmd = new Commands.ConsCommand();
@@ -230,6 +258,29 @@ public class CommandsTest extends ClientBase {
         CommandResponse response = cmd.run(zkServer, null);
 
         // Assert
+        assertThat(response.toMap().containsKey("connections"), is(true));
+        assertThat(response.toMap().containsKey("secure_connections"), is(true));
+    }
+
+    /**
+     * testing Stat command, when only SecureClientPort is defined by the user and there is no
+     * regular (non-SSL port) open. In this case zkServer.getServerCnxnFactory === null
+     * see: ZOOKEEPER-3633
+     */
+    @Test
+    public void testStatCommandSecureOnly() {
+        Commands.StatCommand cmd = new Commands.StatCommand();
+        ZooKeeperServer zkServer = mock(ZooKeeperServer.class);
+        ServerCnxnFactory cnxnFactory = mock(ServerCnxnFactory.class);
+        ServerStats serverStats = mock(ServerStats.class);
+        ZKDatabase zkDatabase = mock(ZKDatabase.class);
+        when(zkServer.getSecureServerCnxnFactory()).thenReturn(cnxnFactory);
+        when(zkServer.serverStats()).thenReturn(serverStats);
+        when(zkServer.getZKDatabase()).thenReturn(zkDatabase);
+        when(zkDatabase.getNodeCount()).thenReturn(0);
+
+        CommandResponse response = cmd.run(zkServer, null);
+
         assertThat(response.toMap().containsKey("connections"), is(true));
         assertThat(response.toMap().containsKey("secure_connections"), is(true));
     }

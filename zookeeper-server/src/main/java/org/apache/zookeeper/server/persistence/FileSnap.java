@@ -78,28 +78,37 @@ public class FileSnap implements SnapShot {
             return -1L;
         }
         File snap = null;
+        long snapZxid = -1;
         boolean foundValid = false;
         for (int i = 0, snapListSize = snapList.size(); i < snapListSize; i++) {
             snap = snapList.get(i);
-            LOG.info("Reading snapshot " + snap);
+            LOG.info("Reading snapshot {}", snap);
+            snapZxid = Util.getZxidFromName(snap.getName(), SNAPSHOT_FILE_PREFIX);
             try (CheckedInputStream snapIS = SnapStream.getInputStream(snap)) {
                 InputArchive ia = BinaryInputArchive.getArchive(snapIS);
                 deserialize(dt, sessions, ia);
                 SnapStream.checkSealIntegrity(snapIS, ia);
-                if (dt.deserializeZxidDigest(ia)) {
+
+                // Digest feature was added after the CRC to make it backward
+                // compatible, the older code can still read snapshots which
+                // includes digest.
+                //
+                // To check the intact, after adding digest we added another
+                // CRC check.
+                if (dt.deserializeZxidDigest(ia, snapZxid)) {
                     SnapStream.checkSealIntegrity(snapIS, ia);
                 }
 
                 foundValid = true;
                 break;
             } catch (IOException e) {
-                LOG.warn("problem reading snap file " + snap, e);
+                LOG.warn("problem reading snap file {}", snap, e);
             }
         }
         if (!foundValid) {
             throw new IOException("Not able to find valid snapshots in " + snapDir);
         }
-        dt.lastProcessedZxid = Util.getZxidFromName(snap.getName(), SNAPSHOT_FILE_PREFIX);
+        dt.lastProcessedZxid = snapZxid;
         lastSnapshotInfo = new SnapshotInfo(dt.lastProcessedZxid, snap.lastModified() / 1000);
 
         // compare the digest if this is not a fuzzy snapshot, we want to compare
@@ -150,7 +159,7 @@ public class FileSnap implements SnapShot {
      * less than n in case enough snapshots are not available).
      * @throws IOException
      */
-    private List<File> findNValidSnapshots(int n) throws IOException {
+    protected List<File> findNValidSnapshots(int n) throws IOException {
         List<File> files = Util.sortDataDir(snapDir.listFiles(), SNAPSHOT_FILE_PREFIX, false);
         int count = 0;
         List<File> list = new ArrayList<File>();
@@ -167,7 +176,7 @@ public class FileSnap implements SnapShot {
                     }
                 }
             } catch (IOException e) {
-                LOG.info("invalid snapshot " + f, e);
+                LOG.warn("invalid snapshot {}", f, e);
             }
         }
         return list;
@@ -231,7 +240,7 @@ public class FileSnap implements SnapShot {
         File snapShot,
         boolean fsync) throws IOException {
         if (!close) {
-            try (CheckedOutputStream snapOS = SnapStream.getOutputStream(snapShot)) {
+            try (CheckedOutputStream snapOS = SnapStream.getOutputStream(snapShot, fsync)) {
                 OutputArchive oa = BinaryOutputArchive.getArchive(snapOS);
                 FileHeader header = new FileHeader(SNAP_MAGIC, VERSION, dbId);
                 serialize(dt, sessions, oa, header);
@@ -251,6 +260,8 @@ public class FileSnap implements SnapShot {
                     Util.getZxidFromName(snapShot.getName(), SNAPSHOT_FILE_PREFIX),
                     snapShot.lastModified() / 1000);
             }
+        } else {
+            throw new IOException("FileSnap has already been closed");
         }
     }
 

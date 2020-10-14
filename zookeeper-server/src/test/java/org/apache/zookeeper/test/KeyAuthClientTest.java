@@ -18,14 +18,14 @@
 
 package org.apache.zookeeper.test;
 
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.util.List;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.ACL;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,12 +39,12 @@ public class KeyAuthClientTest extends ClientBase {
 
     public void createNodePrintAcl(ZooKeeper zk, String path, String testName) {
         try {
-            LOG.debug("KeyAuthenticationProvider Creating Test Node:" + path + ".\n");
+            LOG.debug("KeyAuthenticationProvider Creating Test Node:{}\n", path);
             zk.create(path, null, Ids.CREATOR_ALL_ACL, CreateMode.PERSISTENT);
             List<ACL> acls = zk.getACL(path, null);
-            LOG.debug("Node: " + path + " Test:" + testName + " ACLs:");
+            LOG.debug("Node:{} Test:{} ACLs:", path, testName);
             for (ACL acl : acls) {
-                LOG.debug("  " + acl.toString());
+                LOG.debug("  {}", acl.toString());
             }
         } catch (Exception e) {
             LOG.debug("  EXCEPTION THROWN", e);

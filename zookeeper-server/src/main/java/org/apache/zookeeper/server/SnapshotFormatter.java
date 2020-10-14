@@ -19,6 +19,7 @@
 package org.apache.zookeeper.server;
 
 import static org.apache.zookeeper.server.persistence.FileSnap.SNAPSHOT_FILE_PREFIX;
+import com.fasterxml.jackson.core.io.JsonStringEncoder;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -35,7 +36,7 @@ import org.apache.zookeeper.data.StatPersisted;
 import org.apache.zookeeper.server.persistence.FileSnap;
 import org.apache.zookeeper.server.persistence.SnapStream;
 import org.apache.zookeeper.server.persistence.Util;
-import org.json.simple.JSONValue;
+import org.apache.zookeeper.util.ServiceUtils;
 
 /**
  * Dump a snapshot file to stdout.
@@ -72,18 +73,19 @@ public class SnapshotFormatter {
             System.err.println("USAGE: SnapshotFormatter [-d|-json] snapshot_file");
             System.err.println("       -d dump the data for each znode");
             System.err.println("       -json dump znode info in json format");
-            System.exit(ExitCode.INVALID_INVOCATION.getValue());
+            ServiceUtils.requestSystemExit(ExitCode.INVALID_INVOCATION.getValue());
+            return;
         }
 
         String error = ZKUtil.validateFileInput(snapshotFile);
         if (null != error) {
             System.err.println(error);
-            System.exit(ExitCode.INVALID_INVOCATION.getValue());
+            ServiceUtils.requestSystemExit(ExitCode.INVALID_INVOCATION.getValue());
         }
 
         if (dumpData && dumpJson) {
             System.err.println("Cannot specify both data dump (-d) and json mode (-json) in same call");
-            System.exit(ExitCode.INVALID_INVOCATION.getValue());
+            ServiceUtils.requestSystemExit(ExitCode.INVALID_INVOCATION.getValue());
         }
 
         new SnapshotFormatter().run(snapshotFile, dumpData, dumpJson);
@@ -113,6 +115,11 @@ public class SnapshotFormatter {
     private void printDetails(DataTree dataTree, Map<Long, Integer> sessions, boolean dumpData, long fileNameZxid) {
         long dtZxid = printZnodeDetails(dataTree, dumpData);
         printSessionDetails(dataTree, sessions);
+        DataTree.ZxidDigest targetZxidDigest = dataTree.getDigestFromLoadedSnapshot();
+        if (targetZxidDigest != null) {
+            System.out.println(String.format("Target zxid digest is: %s, %s",
+                    Long.toHexString(targetZxidDigest.zxid), targetZxidDigest.digest));
+        }
         System.out.println(String.format("----%nLast zxid: 0x%s", Long.toHexString(Math.max(fileNameZxid, dtZxid))));
     }
 
@@ -174,14 +181,16 @@ public class SnapshotFormatter {
     }
 
     private void printSnapshotJson(final DataTree dataTree) {
+        JsonStringEncoder encoder = JsonStringEncoder.getInstance();
         System.out.printf(
             "[1,0,{\"progname\":\"SnapshotFormatter.java\",\"progver\":\"0.01\",\"timestamp\":%d}",
             System.currentTimeMillis());
-        printZnodeJson(dataTree, "/");
+        printZnodeJson(dataTree, "/", encoder);
         System.out.print("]");
     }
 
-    private void printZnodeJson(final DataTree dataTree, final String fullPath) {
+    private void printZnodeJson(final DataTree dataTree, final String fullPath, JsonStringEncoder encoder) {
+
 
         final DataNode n = dataTree.getNode(fullPath);
 
@@ -202,7 +211,7 @@ public class SnapshotFormatter {
         }
         StringBuilder nodeSB = new StringBuilder();
         nodeSB.append("{");
-        nodeSB.append("\"name\":\"").append(JSONValue.escape(name)).append("\"").append(",");
+        nodeSB.append("\"name\":\"").append(encoder.quoteAsString(name)).append("\"").append(",");
         nodeSB.append("\"asize\":").append(dataLen).append(",");
         nodeSB.append("\"dsize\":").append(dataLen).append(",");
         nodeSB.append("\"dev\":").append(0).append(",");
@@ -216,7 +225,7 @@ public class SnapshotFormatter {
         if (children != null && children.size() > 0) {
             System.out.print("[" + nodeSB);
             for (String child : children) {
-                printZnodeJson(dataTree, fullPath + (fullPath.equals("/") ? "" : "/") + child);
+                printZnodeJson(dataTree, fullPath + (fullPath.equals("/") ? "" : "/") + child, encoder);
             }
             System.out.print("]");
         } else {

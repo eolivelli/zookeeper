@@ -151,9 +151,7 @@ final class ZKHostnameVerifier implements HostnameVerifier {
             verify(host, x509);
             return true;
         } catch (final SSLException ex) {
-            if (log.isDebugEnabled()) {
-                log.debug(ex.getMessage(), ex);
-            }
+            log.debug("Unexpected exception", ex);
             return false;
         }
     }
@@ -326,8 +324,14 @@ final class ZKHostnameVerifier implements HostnameVerifier {
             for (List<?> entry : entries) {
                 final Integer type = entry.size() >= 2 ? (Integer) entry.get(0) : null;
                 if (type != null) {
-                    final String s = (String) entry.get(1);
-                    result.add(new SubjectName(s, type));
+                    if (type == SubjectName.DNS || type == SubjectName.IP) {
+                        final Object o = entry.get(1);
+                        if (o instanceof String) {
+                            result.add(new SubjectName((String) o, type));
+                        } else if (o instanceof byte[]) {
+                            // TODO ASN.1 DER encoded form
+                        }
+                    }
                 }
             }
             return result;

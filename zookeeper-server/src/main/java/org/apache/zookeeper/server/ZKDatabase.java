@@ -55,6 +55,7 @@ import org.apache.zookeeper.server.quorum.Leader.Proposal;
 import org.apache.zookeeper.server.quorum.QuorumPacket;
 import org.apache.zookeeper.server.quorum.flexible.QuorumVerifier;
 import org.apache.zookeeper.server.util.SerializeUtils;
+import org.apache.zookeeper.txn.TxnDigest;
 import org.apache.zookeeper.txn.TxnHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -115,14 +116,19 @@ public class ZKDatabase {
                             Double.toString(DEFAULT_SNAPSHOT_SIZE_FACTOR)));
             if (snapshotSizeFactor > 1) {
                 snapshotSizeFactor = DEFAULT_SNAPSHOT_SIZE_FACTOR;
-                LOG.warn("The configured {} is invalid, going to use the default {}",
-                         SNAPSHOT_SIZE_FACTOR,
-                         DEFAULT_SNAPSHOT_SIZE_FACTOR);
+                LOG.warn(
+                    "The configured {} is invalid, going to use the default {}",
+                    SNAPSHOT_SIZE_FACTOR,
+                    DEFAULT_SNAPSHOT_SIZE_FACTOR);
             }
         } catch (NumberFormatException e) {
-            LOG.error("Error parsing {}, using default value {}", SNAPSHOT_SIZE_FACTOR, DEFAULT_SNAPSHOT_SIZE_FACTOR);
+            LOG.error(
+                "Error parsing {}, using default value {}",
+                SNAPSHOT_SIZE_FACTOR,
+                DEFAULT_SNAPSHOT_SIZE_FACTOR);
             snapshotSizeFactor = DEFAULT_SNAPSHOT_SIZE_FACTOR;
         }
+
         LOG.info("{} = {}", SNAPSHOT_SIZE_FACTOR, snapshotSizeFactor);
 
         try {
@@ -131,13 +137,16 @@ public class ZKDatabase {
                             Integer.toString(DEFAULT_COMMIT_LOG_COUNT)));
             if (commitLogCount < DEFAULT_COMMIT_LOG_COUNT) {
                 commitLogCount = DEFAULT_COMMIT_LOG_COUNT;
-                LOG.warn("The configured commitLogCount {} is less than the recommended {}"
-                         + ", going to use the recommended one",
-                         COMMIT_LOG_COUNT, DEFAULT_COMMIT_LOG_COUNT);
+                LOG.warn(
+                    "The configured commitLogCount {} is less than the recommended {}, going to use the recommended one",
+                    COMMIT_LOG_COUNT,
+                    DEFAULT_COMMIT_LOG_COUNT);
             }
         } catch (NumberFormatException e) {
-            LOG.error("Error parsing {} - use default value {}",
-                    COMMIT_LOG_COUNT, DEFAULT_COMMIT_LOG_COUNT);
+            LOG.error(
+                "Error parsing {} - use default value {}",
+                COMMIT_LOG_COUNT,
+                DEFAULT_COMMIT_LOG_COUNT);
             commitLogCount = DEFAULT_COMMIT_LOG_COUNT;
         }
         LOG.info("{}={}", COMMIT_LOG_COUNT, commitLogCount);
@@ -260,8 +269,8 @@ public class ZKDatabase {
     }
 
     private final PlayBackListener commitProposalPlaybackListener = new PlayBackListener() {
-        public void onTxnLoaded(TxnHeader hdr, Record txn) {
-            addCommittedProposal(hdr, txn);
+        public void onTxnLoaded(TxnHeader hdr, Record txn, TxnDigest digest) {
+            addCommittedProposal(hdr, txn, digest);
         }
     };
 
@@ -277,7 +286,8 @@ public class ZKDatabase {
         initialized = true;
         long loadTime = Time.currentElapsedTime() - startTime;
         ServerMetrics.getMetrics().DB_INIT_TIME.add(loadTime);
-        LOG.info("Snapshot loaded in " + loadTime + " ms");
+        LOG.info("Snapshot loaded in {} ms, highest zxid is 0x{}, digest is {}",
+                loadTime, Long.toHexString(zxid), dataTree.getTreeDigest());
         return zxid;
     }
 
@@ -292,8 +302,9 @@ public class ZKDatabase {
         return zxid;
     }
 
-    private void addCommittedProposal(TxnHeader hdr, Record txn) {
+    private void addCommittedProposal(TxnHeader hdr, Record txn, TxnDigest digest) {
         Request r = new Request(0, hdr.getCxid(), hdr.getType(), hdr, txn, hdr.getZxid());
+        r.setTxnDigest(digest);
         addCommittedProposal(r);
     }
 
@@ -331,7 +342,7 @@ public class ZKDatabase {
     public boolean isTxnLogSyncEnabled() {
         boolean enabled = snapshotSizeFactor >= 0;
         if (enabled) {
-            LOG.info("On disk txn sync enabled with snapshotSizeFactor " + snapshotSizeFactor);
+            LOG.info("On disk txn sync enabled with snapshotSizeFactor {}", snapshotSizeFactor);
         } else {
             LOG.info("On disk txn sync disabled");
         }
@@ -373,7 +384,9 @@ public class ZKDatabase {
             // If we cannot guarantee that this is strictly the starting txn
             // after a given zxid, we should fail.
             if ((itr.getHeader() != null) && (itr.getHeader().getZxid() > startZxid)) {
-                LOG.warn("Unable to find proposals from txnlog for zxid: " + startZxid);
+                LOG.warn(
+                    "Unable to find proposals from txnlog for zxid: 0x{}",
+                    Long.toHexString(startZxid));
                 itr.close();
                 return TxnLogProposalIterator.EMPTY_ITERATOR;
             }
@@ -381,7 +394,7 @@ public class ZKDatabase {
             if (sizeLimit > 0) {
                 long txnSize = itr.getStorageSize();
                 if (txnSize > sizeLimit) {
-                    LOG.info("Txnlog size: " + txnSize + " exceeds sizeLimit: " + sizeLimit);
+                    LOG.info("Txnlog size: {} exceeds sizeLimit: {}", txnSize, sizeLimit);
                     itr.close();
                     return TxnLogProposalIterator.EMPTY_ITERATOR;
                 }
@@ -458,14 +471,15 @@ public class ZKDatabase {
     }
 
     /**
-     * the process txn on the data
+     * the process txn on the data and perform digest comparision.
      * @param hdr the txnheader for the txn
      * @param txn the transaction that needs to be processed
+     * @param digest the expected digest. A null value would skip the check
      * @return the result of processing the transaction on this
      * datatree/zkdatabase
      */
-    public ProcessTxnResult processTxn(TxnHeader hdr, Record txn) {
-        return dataTree.processTxn(hdr, txn);
+    public ProcessTxnResult processTxn(TxnHeader hdr, Record txn, TxnDigest digest) {
+        return dataTree.processTxn(hdr, txn, digest);
     }
 
     /**
@@ -506,10 +520,27 @@ public class ZKDatabase {
      * @param dataWatches the data watches the client wants to reset
      * @param existWatches the exists watches the client wants to reset
      * @param childWatches the child watches the client wants to reset
+     * @param persistentWatches the persistent watches the client wants to reset
+     * @param persistentRecursiveWatches the persistent recursive watches the client wants to reset
      * @param watcher the watcher function
      */
-    public void setWatches(long relativeZxid, List<String> dataWatches, List<String> existWatches, List<String> childWatches, Watcher watcher) {
-        dataTree.setWatches(relativeZxid, dataWatches, existWatches, childWatches, watcher);
+    public void setWatches(long relativeZxid, List<String> dataWatches, List<String> existWatches, List<String> childWatches,
+                           List<String> persistentWatches, List<String> persistentRecursiveWatches, Watcher watcher) {
+        dataTree.setWatches(relativeZxid, dataWatches, existWatches, childWatches, persistentWatches, persistentRecursiveWatches, watcher);
+    }
+
+    /**
+     * Add a watch
+     *
+     * @param basePath
+     *            watch base
+     * @param watcher
+     *            the watcher
+     * @param mode
+     *            a mode from ZooDefs.AddWatchModes
+     */
+    public void addWatch(String basePath, Watcher watcher, int mode) {
+        dataTree.addWatch(basePath, watcher, mode);
     }
 
     /**
@@ -718,4 +749,7 @@ public class ZKDatabase {
         return snapLog.getTotalLogSize();
     }
 
+    public boolean compareDigest(TxnHeader header, Record txn, TxnDigest digest) {
+        return dataTree.compareDigest(header, txn, digest);
+    }
 }

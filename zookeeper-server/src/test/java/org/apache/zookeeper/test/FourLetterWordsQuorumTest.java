@@ -19,11 +19,11 @@
 package org.apache.zookeeper.test;
 
 import static org.apache.zookeeper.client.FourLetterWordMain.send4LetterWord;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import org.apache.zookeeper.TestableZooKeeper;
 import org.apache.zookeeper.common.X509Exception.SSLContextException;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -102,7 +102,7 @@ public class FourLetterWordsQuorumTest extends QuorumBase {
     private void verify(String hp, String cmd, String expected) throws IOException, SSLContextException {
         for (HostPort hpobj : parseHostPortList(hp)) {
             String resp = send4LetterWord(hpobj.host, hpobj.port, cmd);
-            LOG.info("cmd " + cmd + " expected " + expected + " got " + resp);
+            LOG.info("cmd {} expected {} got {}", cmd, expected, resp);
             if (cmd.equals("dump")) {
                 assertTrue(resp.contains(expected) || resp.contains("Sessions with Ephemerals"));
             } else {

@@ -27,7 +27,10 @@ import org.apache.zookeeper.common.Time;
 import org.apache.zookeeper.data.Id;
 import org.apache.zookeeper.metrics.Summary;
 import org.apache.zookeeper.metrics.SummarySet;
+import org.apache.zookeeper.server.quorum.LearnerHandler;
 import org.apache.zookeeper.server.quorum.flexible.QuorumVerifier;
+import org.apache.zookeeper.server.util.AuthUtil;
+import org.apache.zookeeper.txn.TxnDigest;
 import org.apache.zookeeper.txn.TxnHeader;
 
 /**
@@ -98,16 +101,38 @@ public class Request {
 
     public long syncQueueStartTime;
 
+    public long requestThrottleQueueTime;
+
     private Object owner;
 
     private KeeperException e;
 
     public QuorumVerifier qv = null;
 
+    private TxnDigest txnDigest;
+
+    private boolean isThrottledFlag = false;
+
+    public boolean isThrottled() {
+      return isThrottledFlag;
+    }
+
+    public void setIsThrottled(boolean val) {
+      isThrottledFlag = val;
+    }
+
+    public boolean isThrottlable() {
+        return this.type != OpCode.ping
+                && this.type != OpCode.closeSession
+                && this.type != OpCode.createSession;
+    }
+
     /**
      * If this is a create or close request for a local-only session.
      */
     private boolean isLocalSession = false;
+
+    private int largeRequestSize = -1;
 
     public boolean isLocalSession() {
         return isLocalSession;
@@ -115,6 +140,14 @@ public class Request {
 
     public void setLocalSession(boolean isLocalSession) {
         this.isLocalSession = isLocalSession;
+    }
+
+    public void setLargeRequestSize(int size) {
+        largeRequestSize = size;
+    }
+
+    public int getLargeRequestSize() {
+        return largeRequestSize;
     }
 
     public Object getOwner() {
@@ -233,9 +266,11 @@ public class Request {
         case OpCode.setACL:
         case OpCode.setData:
         case OpCode.setWatches:
+        case OpCode.setWatches2:
         case OpCode.sync:
         case OpCode.checkWatches:
         case OpCode.removeWatches:
+        case OpCode.addWatch:
             return true;
         default:
             return false;
@@ -276,64 +311,70 @@ public class Request {
 
     public static String op2String(int op) {
         switch (op) {
-        case OpCode.notification:
-            return "notification";
-        case OpCode.create:
-            return "create";
-        case OpCode.create2:
-            return "create2";
-        case OpCode.createTTL:
-            return "createTtl";
-        case OpCode.createContainer:
-            return "createContainer";
-        case OpCode.setWatches:
-            return "setWatches";
-        case OpCode.delete:
-            return "delete";
-        case OpCode.deleteContainer:
-            return "deleteContainer";
-        case OpCode.exists:
-            return "exists";
-        case OpCode.getData:
-            return "getData";
-        case OpCode.check:
-            return "check";
-        case OpCode.multi:
-            return "multi";
-        case OpCode.multiRead:
-            return "multiRead";
-        case OpCode.setData:
-            return "setData";
-        case OpCode.sync:
-            return "sync:";
-        case OpCode.getACL:
-            return "getACL";
-        case OpCode.setACL:
-            return "setACL";
-        case OpCode.getChildren:
-            return "getChildren";
-        case OpCode.getAllChildrenNumber:
-            return "getAllChildrenNumber";
-        case OpCode.getChildren2:
-            return "getChildren2";
-        case OpCode.getEphemerals:
-            return "getEphemerals";
-        case OpCode.ping:
-            return "ping";
-        case OpCode.createSession:
-            return "createSession";
-        case OpCode.closeSession:
-            return "closeSession";
-        case OpCode.error:
-            return "error";
-        case OpCode.reconfig:
-            return "reconfig";
-        case OpCode.checkWatches:
-            return "checkWatches";
-        case OpCode.removeWatches:
-            return "removeWatches";
-        default:
-            return "unknown " + op;
+            case OpCode.notification:
+                return "notification";
+            case OpCode.create:
+                return "create";
+            case OpCode.delete:
+                return "delete";
+            case OpCode.exists:
+                return "exists";
+            case OpCode.getData:
+                return "getData";
+            case OpCode.setData:
+                return "setData";
+            case OpCode.getACL:
+                return "getACL";
+            case OpCode.setACL:
+                return "setACL";
+            case OpCode.getChildren:
+                return "getChildren";
+            case OpCode.sync:
+                return "sync";
+            case OpCode.ping:
+                return "ping";
+            case OpCode.getChildren2:
+                return "getChildren2";
+            case OpCode.check:
+                return "check";
+            case OpCode.multi:
+                return "multi";
+            case OpCode.create2:
+                return "create2";
+            case OpCode.reconfig:
+                return "reconfig";
+            case OpCode.checkWatches:
+                return "checkWatches";
+            case OpCode.removeWatches:
+                return "removeWatches";
+            case OpCode.createContainer:
+                return "createContainer";
+            case OpCode.deleteContainer:
+                return "deleteContainer";
+            case OpCode.createTTL:
+                return "createTtl";
+            case OpCode.multiRead:
+                return "multiRead";
+            case OpCode.auth:
+                return "auth";
+            case OpCode.setWatches:
+                return "setWatches";
+            case OpCode.setWatches2:
+                return "setWatches2";
+            case OpCode.sasl:
+                return "sasl";
+            case OpCode.getEphemerals:
+                return "getEphemerals";
+            case OpCode.getAllChildrenNumber:
+                return "getAllChildrenNumber";
+            case OpCode.createSession:
+                return "createSession";
+            case OpCode.closeSession:
+                return "closeSession";
+            case OpCode.error:
+                return "error";
+            default:
+                return "unknown " + op;
         }
     }
 
@@ -350,6 +391,7 @@ public class Request {
         String path = "n/a";
         if (type != OpCode.createSession
             && type != OpCode.setWatches
+            && type != OpCode.setWatches2
             && type != OpCode.closeSession
             && request != null
             && request.remaining() >= 4) {
@@ -415,4 +457,42 @@ public class Request {
         logLatency(metric, key, Time.currentWallTime());
     }
 
+    /**
+     * Returns comma separated list of users authenticated in the current
+     * session
+     */
+    public String getUsers() {
+        if (authInfo == null) {
+            return (String) null;
+        }
+        if (authInfo.size() == 1) {
+            return AuthUtil.getUser(authInfo.get(0));
+        }
+        StringBuilder users = new StringBuilder();
+        boolean first = true;
+        for (Id id : authInfo) {
+            String user = AuthUtil.getUser(id);
+            if (user != null) {
+                if (first) {
+                    first = false;
+                } else {
+                    users.append(",");
+                }
+                users.append(user);
+            }
+        }
+        return users.toString();
+    }
+
+    public TxnDigest getTxnDigest() {
+        return txnDigest;
+    }
+
+    public void setTxnDigest(TxnDigest txnDigest) {
+        this.txnDigest = txnDigest;
+    }
+
+    public boolean isFromLearner() {
+        return owner instanceof LearnerHandler;
+    }
 }

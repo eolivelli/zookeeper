@@ -19,6 +19,7 @@
 package org.apache.zookeeper.server.quorum;
 
 import java.io.IOException;
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
@@ -237,19 +238,21 @@ public class FastLeaderElection implements Election {
                             continue;
                         }
 
+                        final int capacity = response.buffer.capacity();
+
                         // The current protocol and two previous generations all send at least 28 bytes
-                        if (response.buffer.capacity() < 28) {
-                            LOG.error("Got a short response: " + response.buffer.capacity());
+                        if (capacity < 28) {
+                            LOG.error("Got a short response from server {}: {}", response.sid, capacity);
                             continue;
                         }
 
                         // this is the backwardCompatibility mode in place before ZK-107
                         // It is for a version of the protocol in which we didn't send peer epoch
                         // With peer epoch and version the message became 40 bytes
-                        boolean backCompatibility28 = (response.buffer.capacity() == 28);
+                        boolean backCompatibility28 = (capacity == 28);
 
                         // this is the backwardCompatibility mode for no version information
-                        boolean backCompatibility40 = (response.buffer.capacity() == 40);
+                        boolean backCompatibility40 = (capacity == 40);
 
                         response.buffer.clear();
 
@@ -263,64 +266,74 @@ public class FastLeaderElection implements Election {
                         long rpeerepoch;
 
                         int version = 0x0;
-                        if (!backCompatibility28) {
-                            rpeerepoch = response.buffer.getLong();
-                            if (!backCompatibility40) {
-                                /*
-                                 * Version added in 3.4.6
-                                 */
-
-                                version = response.buffer.getInt();
-                            } else {
-                                LOG.info("Backward compatibility mode (36 bits), server id: {}", response.sid);
-                            }
-                        } else {
-                            LOG.info("Backward compatibility mode (28 bits), server id: {}", response.sid);
-                            rpeerepoch = ZxidUtils.getEpochFromZxid(rzxid);
-                        }
-
                         QuorumVerifier rqv = null;
 
-                        // check if we have a version that includes config. If so extract config info from message.
-                        if (version > 0x1) {
-                            int configLength = response.buffer.getInt();
-                            byte[] b = new byte[configLength];
+                        try {
+                            if (!backCompatibility28) {
+                                rpeerepoch = response.buffer.getLong();
+                                if (!backCompatibility40) {
+                                    /*
+                                     * Version added in 3.4.6
+                                     */
 
-                            response.buffer.get(b);
-
-                            synchronized (self) {
-                                try {
-                                    rqv = self.configFromString(new String(b));
-                                    QuorumVerifier curQV = self.getQuorumVerifier();
-                                    if (rqv.getVersion() > curQV.getVersion()) {
-                                        LOG.info("{} Received version: {} my version: {}",
-                                                 self.getId(),
-                                                 Long.toHexString(rqv.getVersion()),
-                                                 Long.toHexString(self.getQuorumVerifier().getVersion()));
-                                        if (self.getPeerState() == ServerState.LOOKING) {
-                                            LOG.debug("Invoking processReconfig(), state: {}", self.getServerState());
-                                            self.processReconfig(rqv, null, null, false);
-                                            if (!rqv.equals(curQV)) {
-                                                LOG.info("restarting leader election");
-                                                self.shuttingDownLE = true;
-                                                self.getElectionAlg().shutdown();
-
-                                                break;
-                                            }
-                                        } else {
-                                            LOG.debug("Skip processReconfig(), state: {}", self.getServerState());
-                                        }
-                                    }
-                                } catch (IOException e) {
-                                    LOG.error("Something went wrong while processing config received from {}", response.sid);
-                                } catch (ConfigException e) {
-                                    LOG.error("Something went wrong while processing config received from {}", response.sid);
+                                    version = response.buffer.getInt();
+                                } else {
+                                    LOG.info("Backward compatibility mode (36 bits), server id: {}", response.sid);
                                 }
+                            } else {
+                                LOG.info("Backward compatibility mode (28 bits), server id: {}", response.sid);
+                                rpeerepoch = ZxidUtils.getEpochFromZxid(rzxid);
                             }
-                        } else {
-                            LOG.info("Backward compatibility mode (before reconfig), server id: {}", response.sid);
-                        }
 
+                            // check if we have a version that includes config. If so extract config info from message.
+                            if (version > 0x1) {
+                                int configLength = response.buffer.getInt();
+
+                                // we want to avoid errors caused by the allocation of a byte array with negative length
+                                // (causing NegativeArraySizeException) or huge length (causing e.g. OutOfMemoryError)
+                                if (configLength < 0 || configLength > capacity) {
+                                    throw new IOException(String.format("Invalid configLength in notification message! sid=%d, capacity=%d, version=%d, configLength=%d",
+                                                                        response.sid, capacity, version, configLength));
+                                }
+
+                                byte[] b = new byte[configLength];
+                                response.buffer.get(b);
+
+                                synchronized (self) {
+                                    try {
+                                        rqv = self.configFromString(new String(b));
+                                        QuorumVerifier curQV = self.getQuorumVerifier();
+                                        if (rqv.getVersion() > curQV.getVersion()) {
+                                            LOG.info("{} Received version: {} my version: {}",
+                                                     self.getId(),
+                                                     Long.toHexString(rqv.getVersion()),
+                                                     Long.toHexString(self.getQuorumVerifier().getVersion()));
+                                            if (self.getPeerState() == ServerState.LOOKING) {
+                                                LOG.debug("Invoking processReconfig(), state: {}", self.getServerState());
+                                                self.processReconfig(rqv, null, null, false);
+                                                if (!rqv.equals(curQV)) {
+                                                    LOG.info("restarting leader election");
+                                                    self.shuttingDownLE = true;
+                                                    self.getElectionAlg().shutdown();
+
+                                                    break;
+                                                }
+                                            } else {
+                                                LOG.debug("Skip processReconfig(), state: {}", self.getServerState());
+                                            }
+                                        }
+                                    } catch (IOException | ConfigException e) {
+                                        LOG.error("Something went wrong while processing config received from {}", response.sid);
+                                    }
+                                }
+                            } else {
+                                LOG.info("Backward compatibility mode (before reconfig), server id: {}", response.sid);
+                            }
+                        } catch (BufferUnderflowException | IOException e) {
+                            LOG.warn("Skipping the processing of a partial / malformed response message sent by sid={} (message length: {})",
+                                     response.sid, capacity, e);
+                            continue;
+                        }
                         /*
                          * If it is from a non-voting server (such as an observer or
                          * a non-voting follower), respond right away.
@@ -373,9 +386,18 @@ public class FastLeaderElection implements Election {
                             /*
                              * Print notification info
                              */
-                            if (LOG.isInfoEnabled()) {
-                                printNotification(n);
-                            }
+                            LOG.info(
+                                "Notification: my state:{}; n.sid:{}, n.state:{}, n.leader:{}, n.round:0x{}, "
+                                    + "n.peerEpoch:0x{}, n.zxid:0x{}, message format version:0x{}, n.config version:0x{}",
+                                self.getPeerState(),
+                                n.sid,
+                                n.state,
+                                n.leader,
+                                Long.toHexString(n.electionEpoch),
+                                Long.toHexString(n.peerEpoch),
+                                Long.toHexString(n.zxid),
+                                Long.toHexString(n.version),
+                                (n.qv != null ? (Long.toHexString(n.qv.getVersion())) : "0"));
 
                             /*
                              * If this server is looking, then send proposed leader
@@ -418,14 +440,15 @@ public class FastLeaderElection implements Election {
                                         }
                                         self.leader.reportLookingSid(response.sid);
                                     }
-                                    if (LOG.isDebugEnabled()) {
-                                        LOG.debug("Sending new notification. My id ={} recipient={} zxid=0x{} leader={} config version = {}",
-                                                  self.getId(),
-                                                  response.sid,
-                                                  Long.toHexString(current.getZxid()),
-                                                  current.getId(),
-                                                  Long.toHexString(self.getQuorumVerifier().getVersion()));
-                                    }
+
+
+                                    LOG.debug(
+                                        "Sending new notification. My id ={} recipient={} zxid=0x{} leader={} config version = {}",
+                                        self.getId(),
+                                        response.sid,
+                                        Long.toHexString(current.getZxid()),
+                                        current.getId(),
+                                        Long.toHexString(self.getQuorumVerifier().getVersion()));
 
                                     QuorumVerifier qv = self.getQuorumVerifier();
                                     ToSend notmsg = new ToSend(
@@ -442,7 +465,7 @@ public class FastLeaderElection implements Election {
                             }
                         }
                     } catch (InterruptedException e) {
-                        LOG.warn("Interrupted Exception while waiting for new message" + e.toString());
+                        LOG.warn("Interrupted Exception while waiting for new message", e);
                     }
                 }
                 LOG.info("WorkerReceiver is down");
@@ -545,7 +568,7 @@ public class FastLeaderElection implements Election {
     long proposedEpoch;
 
     /**
-     * Returns the current vlue of the logical clock counter
+     * Returns the current value of the logical clock counter
      */
     public long getLogicalClock() {
         return logicalclock.get();
@@ -634,12 +657,12 @@ public class FastLeaderElection implements Election {
     }
 
     private void leaveInstance(Vote v) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("About to leave FLE instance: leader={}, zxid=0x{}, my id={}, my state={}",
-                      v.getId(),
-                      Long.toHexString(v.getZxid()),
-                      self.getId(), self.getPeerState());
-        }
+        LOG.debug(
+            "About to leave FLE instance: leader={}, zxid=0x{}, my id={}, my state={}",
+            v.getId(),
+            Long.toHexString(v.getZxid()),
+            self.getId(),
+            self.getPeerState());
         recvqueue.clear();
     }
 
@@ -675,31 +698,19 @@ public class FastLeaderElection implements Election {
                 sid,
                 proposedEpoch,
                 qv.toString().getBytes());
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("Sending Notification: " + proposedLeader
-                          + " (n.leader), 0x" + Long.toHexString(proposedZxid)
-                          + " (n.zxid), 0x" + Long.toHexString(logicalclock.get())
-                          + " (n.round), " + sid
-                          + " (recipient), " + self.getId()
-                          + " (myid), 0x" + Long.toHexString(proposedEpoch)
-                          + " (n.peerEpoch)");
-            }
+
+            LOG.debug(
+                "Sending Notification: {} (n.leader), 0x{} (n.zxid), 0x{} (n.round), {} (recipient),"
+                    + " {} (myid), 0x{} (n.peerEpoch) ",
+                proposedLeader,
+                Long.toHexString(proposedZxid),
+                Long.toHexString(logicalclock.get()),
+                sid,
+                self.getId(),
+                Long.toHexString(proposedEpoch));
+
             sendqueue.offer(notmsg);
         }
-    }
-
-    private void printNotification(Notification n) {
-        LOG.info("Notification: my state:{}; n.sid:{}, n.state:{}, n.leader:{}, n.round:0x{}, "
-                 + "n.peerEpoch:0x{}, n.zxid:0x{}, message format version:0x{}, n.config version:0x{}",
-                 self.getPeerState(),
-                 n.sid,
-                 n.state,
-                 n.leader,
-                 Long.toHexString(n.electionEpoch),
-                 Long.toHexString(n.peerEpoch),
-                 Long.toHexString(n.zxid),
-                 Long.toHexString(n.version),
-                 (n.qv != null ? (Long.toHexString(n.qv.getVersion())) : "0"));
     }
 
     /**
@@ -708,12 +719,12 @@ public class FastLeaderElection implements Election {
      *
      */
     protected boolean totalOrderPredicate(long newId, long newZxid, long newEpoch, long curId, long curZxid, long curEpoch) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("id: " + newId
-                      + ", proposed id: " + curId
-                      + ", zxid: 0x" + Long.toHexString(newZxid)
-                      + ", proposed zxid: 0x" + Long.toHexString(curZxid));
-        }
+        LOG.debug(
+            "id: {}, proposed id: {}, zxid: 0x{}, proposed zxid: 0x{}",
+            newId,
+            curId,
+            Long.toHexString(newZxid),
+            Long.toHexString(curZxid));
 
         if (self.getQuorumVerifier().getWeight(newId) == 0) {
             return false;
@@ -801,13 +812,13 @@ public class FastLeaderElection implements Election {
     }
 
     synchronized void updateProposal(long leader, long zxid, long epoch) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("Updating proposal: " + leader
-                      + " (newleader), 0x" + Long.toHexString(zxid)
-                      + " (newzxid), " + proposedLeader
-                      + " (oldleader), 0x" + Long.toHexString(proposedZxid)
-                      + " (oldzxid)");
-        }
+        LOG.debug(
+            "Updating proposal: {} (newleader), 0x{} (newzxid), {} (oldleader), 0x{} (oldzxid)",
+            leader,
+            Long.toHexString(zxid),
+            proposedLeader,
+            Long.toHexString(proposedZxid));
+
         proposedLeader = leader;
         proposedZxid = zxid;
         proposedEpoch = epoch;
@@ -907,8 +918,20 @@ public class FastLeaderElection implements Election {
 
         self.start_fle = Time.currentElapsedTime();
         try {
+            /*
+             * The votes from the current leader election are stored in recvset. In other words, a vote v is in recvset
+             * if v.electionEpoch == logicalclock. The current participant uses recvset to deduce on whether a majority
+             * of participants has voted for it.
+             */
             Map<Long, Vote> recvset = new HashMap<Long, Vote>();
 
+            /*
+             * The votes from previous leader elections, as well as the votes from the current leader election are
+             * stored in outofelection. Note that notifications in a LOOKING state are not stored in outofelection.
+             * Only FOLLOWING or LEADING notifications are stored in outofelection. The current participant could use
+             * outofelection to learn which participant is the leader if it arrives late (i.e., higher logicalclock than
+             * the electionEpoch of the received notifications) in a leader election.
+             */
             Map<Long, Vote> outofelection = new HashMap<Long, Vote>();
 
             int notTimeout = minNotificationInterval;
@@ -918,7 +941,10 @@ public class FastLeaderElection implements Election {
                 updateProposal(getInitId(), getInitLastLoggedZxid(), getPeerEpoch());
             }
 
-            LOG.info("New election. My id =  " + self.getId() + ", proposed zxid=0x" + Long.toHexString(proposedZxid));
+            LOG.info(
+                "New election. My id = {}, proposed zxid=0x{}",
+                self.getId(),
+                Long.toHexString(proposedZxid));
             sendNotifications();
 
             SyncedLearnerTracker voteSet;
@@ -949,8 +975,8 @@ public class FastLeaderElection implements Election {
                      * Exponential backoff
                      */
                     int tmpTimeOut = notTimeout * 2;
-                    notTimeout = (tmpTimeOut < maxNotificationInterval ? tmpTimeOut : maxNotificationInterval);
-                    LOG.info("Notification time out: " + notTimeout);
+                    notTimeout = Math.min(tmpTimeOut, maxNotificationInterval);
+                    LOG.info("Notification time out: {}", notTimeout);
                 } else if (validVoter(n.sid) && validVoter(n.leader)) {
                     /*
                      * Only proceed if the vote comes from a replica in the current or next
@@ -977,23 +1003,22 @@ public class FastLeaderElection implements Election {
                             }
                             sendNotifications();
                         } else if (n.electionEpoch < logicalclock.get()) {
-                            if (LOG.isDebugEnabled()) {
                                 LOG.debug(
-                                    "Notification election epoch is smaller than logicalclock. n.electionEpoch = 0x" + Long.toHexString(n.electionEpoch)
-                                    + ", logicalclock=0x" + Long.toHexString(logicalclock.get()));
-                            }
+                                    "Notification election epoch is smaller than logicalclock. n.electionEpoch = 0x{}, logicalclock=0x{}",
+                                    Long.toHexString(n.electionEpoch),
+                                    Long.toHexString(logicalclock.get()));
                             break;
                         } else if (totalOrderPredicate(n.leader, n.zxid, n.peerEpoch, proposedLeader, proposedZxid, proposedEpoch)) {
                             updateProposal(n.leader, n.zxid, n.peerEpoch);
                             sendNotifications();
                         }
 
-                        if (LOG.isDebugEnabled()) {
-                            LOG.debug("Adding vote: from=" + n.sid
-                                      + ", proposed leader=" + n.leader
-                                      + ", proposed zxid=0x" + Long.toHexString(n.zxid)
-                                      + ", proposed election epoch=0x" + Long.toHexString(n.electionEpoch));
-                        }
+                        LOG.debug(
+                            "Adding vote: from={}, proposed leader={}, proposed zxid=0x{}, proposed election epoch=0x{}",
+                            n.sid,
+                            n.leader,
+                            Long.toHexString(n.zxid),
+                            Long.toHexString(n.electionEpoch));
 
                         // don't care about the version if it's in LOOKING state
                         recvset.put(n.sid, new Vote(n.leader, n.zxid, n.electionEpoch, n.peerEpoch));
@@ -1032,9 +1057,9 @@ public class FastLeaderElection implements Election {
                          * together.
                          */
                         if (n.electionEpoch == logicalclock.get()) {
-                            recvset.put(n.sid, new Vote(n.leader, n.zxid, n.electionEpoch, n.peerEpoch));
+                            recvset.put(n.sid, new Vote(n.leader, n.zxid, n.electionEpoch, n.peerEpoch, n.state));
                             voteSet = getVoteTracker(recvset, new Vote(n.version, n.leader, n.zxid, n.electionEpoch, n.peerEpoch, n.state));
-                            if (voteSet.hasAllQuorums() && checkLeader(outofelection, n.leader, n.electionEpoch)) {
+                            if (voteSet.hasAllQuorums() && checkLeader(recvset, n.leader, n.electionEpoch)) {
                                 setPeerState(n.leader, voteSet);
                                 Vote endVote = new Vote(n.leader, n.zxid, n.electionEpoch, n.peerEpoch);
                                 leaveInstance(endVote);
@@ -1045,6 +1070,9 @@ public class FastLeaderElection implements Election {
                         /*
                          * Before joining an established ensemble, verify that
                          * a majority are following the same leader.
+                         *
+                         * Note that the outofelection map also stores votes from the current leader election.
+                         * See ZOOKEEPER-1732 for more information.
                          */
                         outofelection.put(n.sid, new Vote(n.version, n.leader, n.zxid, n.electionEpoch, n.peerEpoch, n.state));
                         voteSet = getVoteTracker(outofelection, new Vote(n.version, n.leader, n.zxid, n.electionEpoch, n.peerEpoch, n.state));
@@ -1060,7 +1088,7 @@ public class FastLeaderElection implements Election {
                         }
                         break;
                     default:
-                        LOG.warn("Notification state unrecoginized: " + n.state + " (n.state), " + n.sid + " (n.sid)");
+                        LOG.warn("Notification state unrecognized: {} (n.state), {}(n.sid)", n.state, n.sid);
                         break;
                     }
                 } else {

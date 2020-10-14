@@ -19,9 +19,9 @@
 package org.apache.zookeeper.server.quorum;
 
 import static org.apache.zookeeper.test.ClientBase.CONNECTION_TIMEOUT;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -37,22 +37,35 @@ import org.apache.zookeeper.server.persistence.FileTxnSnapLog;
 import org.apache.zookeeper.server.quorum.flexible.QuorumMaj;
 import org.apache.zookeeper.test.ClientBase;
 import org.apache.zookeeper.test.ClientBase.CountdownWatcher;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class ReconfigDuringLeaderSyncTest extends QuorumPeerTestBase {
 
-    protected static final Logger LOG = LoggerFactory.getLogger(ReconfigDuringLeaderSyncTest.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ReconfigDuringLeaderSyncTest.class);
     private static int SERVER_COUNT = 3;
     private MainThread[] mt;
+    private static boolean bakAsyncSending;
 
-    @Before
-    public void setup() {
+    public void setup(boolean asyncSending) {
         System.setProperty("zookeeper.DigestAuthenticationProvider.superDigest", "super:D/InIHSb7yEEbrWz8b9l71RjZJU="/* password is 'test'*/);
+        Learner.setAsyncSending(asyncSending);
         QuorumPeerConfig.setReconfigEnabled(true);
+    }
+
+    @BeforeAll
+    public static void saveAsyncSendingFlag() {
+        bakAsyncSending = Learner.getAsyncSending();
+    }
+
+    @AfterAll
+    public static void resetAsyncSendingFlag() {
+        Learner.setAsyncSending(bakAsyncSending);
     }
 
     /**
@@ -67,8 +80,10 @@ public class ReconfigDuringLeaderSyncTest extends QuorumPeerTestBase {
      * deleted.
      */
 
-    @Test
-    public void testDuringLeaderSync() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testDuringLeaderSync(boolean asyncSending) throws Exception {
+        setup(asyncSending);
         final int[] clientPorts = new int[SERVER_COUNT + 1];
         StringBuilder sb = new StringBuilder();
         String[] serverConfig = new String[SERVER_COUNT + 1];
@@ -90,9 +105,8 @@ public class ReconfigDuringLeaderSyncTest extends QuorumPeerTestBase {
 
         // ensure all servers started
         for (int i = 0; i < SERVER_COUNT; i++) {
-            assertTrue(
-                "waiting for server " + i + " being up",
-                ClientBase.waitForServerUp("127.0.0.1:" + clientPorts[i], CONNECTION_TIMEOUT));
+            assertTrue(ClientBase.waitForServerUp("127.0.0.1:" + clientPorts[i], CONNECTION_TIMEOUT),
+                    "waiting for server " + i + " being up");
         }
         CountdownWatcher watch = new CountdownWatcher();
         ZooKeeperAdmin preReconfigClient = new ZooKeeperAdmin(
@@ -166,13 +180,12 @@ public class ReconfigDuringLeaderSyncTest extends QuorumPeerTestBase {
         watch.waitForConnected(ClientBase.CONNECTION_TIMEOUT);
         // do one successful operation on the newly added node
         postReconfigClient.create("/reconfigIssue", "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-        assertFalse("zoo.cfg.dynamic.next is not deleted.", nextDynaFile.exists());
+        assertFalse(nextDynaFile.exists(), "zoo.cfg.dynamic.next is not deleted.");
 
         // verify that joiner has up-to-date config, including all four servers.
         for (long j = 0; j <= SERVER_COUNT; j++) {
-            assertNotNull(
-                "server " + j + " is not present in the new quorum",
-                qp.getQuorumVerifier().getVotingMembers().get(j));
+            assertNotNull(qp.getQuorumVerifier().getVotingMembers().get(j),
+                    "server " + j + " is not present in the new quorum");
         }
 
         // close clients
@@ -195,7 +208,7 @@ public class ReconfigDuringLeaderSyncTest extends QuorumPeerTestBase {
         }
     }
 
-    @After
+    @AfterEach
     public void tearDown() {
         // stop all severs
         if (null != mt) {

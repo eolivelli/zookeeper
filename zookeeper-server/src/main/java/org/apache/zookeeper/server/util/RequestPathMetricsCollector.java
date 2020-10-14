@@ -32,6 +32,7 @@ import static org.apache.zookeeper.ZooDefs.OpCode.getData;
 import static org.apache.zookeeper.ZooDefs.OpCode.removeWatches;
 import static org.apache.zookeeper.ZooDefs.OpCode.setACL;
 import static org.apache.zookeeper.ZooDefs.OpCode.setData;
+import static org.apache.zookeeper.ZooDefs.OpCode.setWatches2;
 import static org.apache.zookeeper.ZooDefs.OpCode.sync;
 import java.io.PrintWriter;
 import java.util.Arrays;
@@ -131,6 +132,7 @@ public class RequestPathMetricsCollector {
         requestsMap.put(Request.op2String(getChildren2), new PathStatsQueue(getChildren2));
         requestsMap.put(Request.op2String(checkWatches), new PathStatsQueue(checkWatches));
         requestsMap.put(Request.op2String(removeWatches), new PathStatsQueue(removeWatches));
+        requestsMap.put(Request.op2String(setWatches2), new PathStatsQueue(setWatches2));
         requestsMap.put(Request.op2String(sync), new PathStatsQueue(sync));
         this.immutableRequestsMap = java.util.Collections.unmodifiableMap(requestsMap);
     }
@@ -186,10 +188,10 @@ public class RequestPathMetricsCollector {
         scheduledExecutor.scheduleWithFixedDelay(() -> {
             LOG.info("%nHere are the top Read paths:");
             logTopPaths(aggregatePaths(4, queue -> !queue.isWriteOperation()),
-                        entry -> LOG.info(entry.getKey() + " : " + entry.getValue()));
+                        entry -> LOG.info("{} : {}", entry.getKey(), entry.getValue()));
             LOG.info("%nHere are the top Write paths:");
             logTopPaths(aggregatePaths(4, queue -> queue.isWriteOperation()),
-                        entry -> LOG.info(entry.getKey() + " : " + entry.getValue()));
+                        entry -> LOG.info("{} : {}", entry.getKey(), entry.getValue()));
         }, COLLECTOR_INITIAL_DELAY, COLLECTOR_DELAY, TimeUnit.MINUTES);
     }
 

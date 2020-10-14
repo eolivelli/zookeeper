@@ -18,7 +18,7 @@
 
 package org.apache.zookeeper.test;
 
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.net.InetSocketAddress;
@@ -33,9 +33,9 @@ import org.apache.zookeeper.server.quorum.QuorumPeer.QuorumServer;
 import org.apache.zookeeper.server.quorum.QuorumPeer.ServerState;
 import org.apache.zookeeper.server.quorum.Vote;
 import org.apache.zookeeper.server.quorum.flexible.QuorumHierarchical;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,7 +53,7 @@ public class FLEZeroWeightTest extends ZKTestCase {
 
     volatile Vote[] votes;
 
-    @Before
+    @BeforeEach
     public void setUp() throws Exception {
         count = 9;
 
@@ -81,7 +81,7 @@ public class FLEZeroWeightTest extends ZKTestCase {
         qp.load(is);
     }
 
-    @After
+    @AfterEach
     public void tearDown() throws Exception {
         for (int i = 0; i < threads.size(); i++) {
             LEThread leThread = threads.get(i);
@@ -101,7 +101,7 @@ public class FLEZeroWeightTest extends ZKTestCase {
         LEThread(QuorumPeer peer, int i) {
             this.i = i;
             this.peer = peer;
-            LOG.info("Constructor: " + getName());
+            LOG.info("Constructor: {}", getName());
         }
 
         public void run() {
@@ -115,7 +115,7 @@ public class FLEZeroWeightTest extends ZKTestCase {
                     LOG.info("Going to call leader election.");
                     v = peer.getElectionAlg().lookForLeader();
                     if (v == null) {
-                        LOG.info("Thread " + i + " got a null vote");
+                        LOG.info("Thread {} got a null vote", i);
                         return;
                     }
 
@@ -125,7 +125,7 @@ public class FLEZeroWeightTest extends ZKTestCase {
                      */
                     peer.setCurrentVote(v);
 
-                    LOG.info("Finished election: " + i + ", " + v.getId());
+                    LOG.info("Finished election: {}, {}", i, v.getId());
                     votes[i] = v;
 
                     if ((peer.getPeerState() == ServerState.LEADING) && (peer.getId() > 2)) {
@@ -137,7 +137,7 @@ public class FLEZeroWeightTest extends ZKTestCase {
                         break;
                     }
                 }
-                LOG.debug("Thread " + i + " votes " + v);
+                LOG.debug("Thread {} votes {}", i, v);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
@@ -147,7 +147,7 @@ public class FLEZeroWeightTest extends ZKTestCase {
 
     @Test
     public void testZeroWeightQuorum() throws Exception {
-        LOG.info("TestZeroWeightQuorum: " + getTestName() + ", " + count);
+        LOG.info("TestZeroWeightQuorum: {}, {}", getTestName(), count);
         for (int i = 0; i < count; i++) {
             InetSocketAddress addr1 = new InetSocketAddress("127.0.0.1", PortAssignment.unique());
             InetSocketAddress addr2 = new InetSocketAddress("127.0.0.1", PortAssignment.unique());
@@ -166,7 +166,7 @@ public class FLEZeroWeightTest extends ZKTestCase {
             thread.start();
             threads.add(thread);
         }
-        LOG.info("Started threads " + getTestName());
+        LOG.info("Started threads {}", getTestName());
 
         for (int i = 0; i < threads.size(); i++) {
             threads.get(i).join(15000);

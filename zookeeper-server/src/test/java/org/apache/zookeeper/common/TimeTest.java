@@ -18,17 +18,16 @@
 
 package org.apache.zookeeper.common;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.zookeeper.CreateMode;
-import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.test.ClientBase;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 /**
  * Command line program for demonstrating robustness to clock
@@ -69,12 +68,9 @@ public class TimeTest extends ClientBase {
 
     private static Watcher createWatcher() {
         watchCount.incrementAndGet();
-        return new Watcher() {
-            @Override
-            public void process(WatchedEvent event) {
-                watchCount.decrementAndGet();
-                System.out.printf("%d event = %s\n", discrepancy(), event);
-            }
+        return event -> {
+            watchCount.decrementAndGet();
+            System.out.printf("%d event = %s\n", discrepancy(), event);
         };
 
     }

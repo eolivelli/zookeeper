@@ -19,11 +19,10 @@
 package org.apache.zookeeper.cli;
 
 import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
-import org.apache.commons.cli.Parser;
-import org.apache.commons.cli.PosixParser;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.ZKUtil;
 
@@ -50,7 +49,7 @@ public class DeleteAllCommand extends CliCommand {
 
     @Override
     public CliCommand parse(String[] cmdArgs) throws CliParseException {
-        Parser parser = new PosixParser();
+        DefaultParser parser = new DefaultParser();
         try {
             cl = parser.parse(options, cmdArgs);
         } catch (ParseException ex) {
@@ -66,7 +65,6 @@ public class DeleteAllCommand extends CliCommand {
 
     @Override
     public boolean exec() throws CliException {
-        printDeprecatedWarning();
         int batchSize;
         try {
             batchSize = cl.hasOption("b") ? Integer.parseInt(cl.getOptionValue("b")) : 1000;
@@ -86,12 +84,6 @@ public class DeleteAllCommand extends CliCommand {
             throw new CliWrapperException(ex);
         }
         return false;
-    }
-
-    private void printDeprecatedWarning() {
-        if ("rmr".equals(args[0])) {
-            err.println("The command 'rmr' has been deprecated. " + "Please use 'deleteall' instead.");
-        }
     }
 
 }

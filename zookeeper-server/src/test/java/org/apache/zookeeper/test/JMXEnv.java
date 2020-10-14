@@ -18,8 +18,8 @@
 
 package org.apache.zookeeper.test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -55,6 +55,7 @@ public class JMXEnv {
         cs.start();
 
         JMXServiceURL addr = cs.getAddress();
+        LOG.info("connecting to addr {}", addr);
 
         cc = JMXConnectorFactory.connect(addr);
     }
@@ -112,10 +113,10 @@ public class JMXEnv {
 
             found = new HashSet<ObjectName>();
             for (String name : expectedNames) {
-                LOG.info("expect:" + name);
+                LOG.info("expect:{}", name);
                 for (ObjectName bean : beans) {
                     if (bean.toString().contains(name)) {
-                        LOG.info("found:" + name + " " + bean);
+                        LOG.info("found:{} {}", name, bean);
                         found.add(bean);
                         break;
                     }
@@ -123,7 +124,7 @@ public class JMXEnv {
                 beans.removeAll(found);
             }
         } while ((expectedNames.length != found.size()) && (nTry < 600));
-        assertEquals("expected " + Arrays.toString(expectedNames), expectedNames.length, found.size());
+        assertEquals(expectedNames.length, found.size(), "expected " + Arrays.toString(expectedNames));
         return beans;
     }
 
@@ -138,10 +139,10 @@ public class JMXEnv {
      * @throws InterruptedException
      */
     public static Set<ObjectName> ensureOnly(String... expectedNames) throws IOException, InterruptedException {
-        LOG.info("ensureOnly:" + Arrays.toString(expectedNames));
+        LOG.info("ensureOnly:{}", Arrays.toString(expectedNames));
         Set<ObjectName> beans = ensureAll(expectedNames);
         for (ObjectName bean : beans) {
-            LOG.info("unexpected:" + bean.toString());
+            LOG.info("unexpected:{}", bean.toString());
         }
         assertEquals(0, beans.size());
         return beans;
@@ -166,7 +167,7 @@ public class JMXEnv {
             for (String name : expectedNames) {
                 for (ObjectName bean : beans) {
                     if (bean.toString().contains(name)) {
-                        LOG.info("didntexpect:" + name);
+                        LOG.info("didntexpect:{}", name);
                         foundUnexpected = true;
                         unexpectedName = name + " " + bean.toString();
                         break;
@@ -180,7 +181,7 @@ public class JMXEnv {
         if (foundUnexpected) {
             LOG.info("List of all beans follows:");
             for (ObjectName bean : beans) {
-                LOG.info("bean:" + bean.toString());
+                LOG.info("bean:{}", bean.toString());
             }
             fail(unexpectedName);
         }
@@ -195,7 +196,7 @@ public class JMXEnv {
             throw new RuntimeException(e);
         }
         for (ObjectName bean : beans) {
-            LOG.info("bean:" + bean.toString());
+            LOG.info("bean:{}", bean.toString());
         }
     }
 
@@ -215,7 +216,7 @@ public class JMXEnv {
      * @throws InterruptedException
      */
     public static Set<ObjectName> ensureParent(String... expectedNames) throws IOException, InterruptedException {
-        LOG.info("ensureParent:" + Arrays.toString(expectedNames));
+        LOG.info("ensureParent:{}", Arrays.toString(expectedNames));
 
         Set<ObjectName> beans;
         int nTry = 0;
@@ -231,11 +232,11 @@ public class JMXEnv {
             }
             found.clear();
             for (String name : expectedNames) {
-                LOG.info("expect:" + name);
+                LOG.info("expect:{}", name);
                 for (ObjectName bean : beans) {
                     // check the existence of name in bean
                     if (compare(bean.toString(), name)) {
-                        LOG.info("found:" + name + " " + bean);
+                        LOG.info("found:{} {}", name, bean);
                         found.add(bean);
                         break;
                     }
@@ -243,7 +244,7 @@ public class JMXEnv {
                 beans.removeAll(found);
             }
         } while (expectedNames.length != found.size() && nTry < 120);
-        assertEquals("expected " + Arrays.toString(expectedNames), expectedNames.length, found.size());
+        assertEquals(expectedNames.length, found.size(), "expected " + Arrays.toString(expectedNames));
         return beans;
     }
 
@@ -263,7 +264,7 @@ public class JMXEnv {
      */
     public static Object ensureBeanAttribute(String expectedName, String expectedAttribute) throws Exception {
         String value = "";
-        LOG.info("ensure bean:{}, attribute:{}", new Object[]{expectedName, expectedAttribute});
+        LOG.info("ensure bean:{}, attribute:{}", expectedName, expectedAttribute);
 
         Set<ObjectName> beans;
         int nTry = 0;
@@ -276,11 +277,11 @@ public class JMXEnv {
             } catch (MalformedObjectNameException e) {
                 throw new RuntimeException(e);
             }
-            LOG.info("expect:" + expectedName);
+            LOG.info("expect:{}", expectedName);
             for (ObjectName bean : beans) {
                 // check the existence of name in bean
                 if (bean.toString().equals(expectedName)) {
-                    LOG.info("found:{} {}", new Object[]{expectedName, bean});
+                    LOG.info("found:{} {}", expectedName, bean);
                     return conn().getAttribute(bean, expectedAttribute);
                 }
             }
@@ -318,7 +319,7 @@ public class JMXEnv {
         }
         for (ObjectName bean : beans) {
             String name = bean.toString();
-            LOG.info("bean:" + name);
+            LOG.info("bean:{}", name);
             for (Pattern pattern : beanPatterns) {
                 if (pattern.matcher(name).find()) {
                     serverBeans.add(bean);

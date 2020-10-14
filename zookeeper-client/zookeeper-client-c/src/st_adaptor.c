@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-#ifndef DLL_EXPORT
+#if !defined(DLL_EXPORT) && !defined(USE_STATIC_LIB)
 #  define USE_STATIC_LIB
 #endif
 
@@ -90,6 +90,16 @@ int lock_reconfig(struct _zhandle *zh)
 }
 
 int unlock_reconfig(struct _zhandle *zh)
+{
+    return 0;
+}
+
+int lock_watchers(struct _zhandle *zh)
+{
+    return 0;
+}
+
+int unlock_watchers(struct _zhandle *zh)
 {
     return 0;
 }

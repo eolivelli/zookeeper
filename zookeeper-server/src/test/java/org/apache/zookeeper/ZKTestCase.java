@@ -18,12 +18,15 @@
 
 package org.apache.zookeeper;
 
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+import java.io.File;
 import java.time.LocalDateTime;
-import org.junit.Rule;
-import org.junit.rules.TestWatcher;
-import org.junit.runner.Description;
-import org.junit.runner.RunWith;
+import org.apache.zookeeper.util.ServiceUtils;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.TestInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,11 +36,15 @@ import org.slf4j.LoggerFactory;
  * Basic utilities shared by all tests. Also logging of various events during
  * the test execution (start/stop/success/failure/etc...)
  */
-@SuppressWarnings("deprecation")
-@RunWith(JUnit4ZKTestRunner.class)
 public class ZKTestCase {
 
+    protected static final File testBaseDir = new File(System.getProperty("build.test.dir", "build"));
     private static final Logger LOG = LoggerFactory.getLogger(ZKTestCase.class);
+
+    static {
+        // Disable System.exit in tests.
+        ServiceUtils.setSystemExitProcedure(ServiceUtils.LOG_ONLY);
+    }
 
     private String testName;
 
@@ -45,38 +52,35 @@ public class ZKTestCase {
         return testName;
     }
 
-    @Rule
-    public TestWatcher watchman = new TestWatcher() {
-
-        @Override
-        public void starting(Description method) {
-            // By default, disable starting a JettyAdminServer in tests to avoid
-            // accidentally attempting to start multiple admin servers on the
-            // same port.
-            System.setProperty("zookeeper.admin.enableServer", "false");
-            // ZOOKEEPER-2693 disables all 4lw by default.
-            // Here we enable the 4lw which ZooKeeper tests depends.
-            System.setProperty("zookeeper.4lw.commands.whitelist", "*");
-            testName = method.getMethodName();
-            LOG.info("STARTING " + testName);
+    @BeforeAll
+    public static void before() {
+        if (!testBaseDir.exists()) {
+            assertTrue(testBaseDir.mkdirs(),
+                "Cannot properly create test base directory " + testBaseDir.getAbsolutePath());
+        } else if (!testBaseDir.isDirectory()) {
+            assertTrue(testBaseDir.delete(),
+                "Cannot properly delete file with duplicate name of test base directory " + testBaseDir.getAbsolutePath());
+            assertTrue(testBaseDir.mkdirs(),
+                "Cannot properly create test base directory " + testBaseDir.getAbsolutePath());
         }
+    }
 
-        @Override
-        public void finished(Description method) {
-            LOG.info("FINISHED " + testName);
-        }
+    @BeforeEach
+    public void starting(TestInfo testInfo) {
+        // By default, disable starting a JettyAdminServer in tests to avoid
+        // accidentally attempting to start multiple admin servers on the
+        // same port.
+        System.setProperty("zookeeper.admin.enableServer", "false");
+        // ZOOKEEPER-2693 disables all 4lw by default.
+        // Here we enable the 4lw which ZooKeeper tests depends.
+        System.setProperty("zookeeper.4lw.commands.whitelist", "*");
+        LOG.info("STARTING {}", testInfo.getTestMethod());
+    }
 
-        @Override
-        public void succeeded(Description method) {
-            LOG.info("SUCCEEDED " + testName);
-        }
-
-        @Override
-        public void failed(Throwable e, Description method) {
-            LOG.info("FAILED " + testName, e);
-        }
-
-    };
+    @AfterEach
+    public void finished(TestInfo testInfo) {
+        LOG.info("FINISHED {}", testInfo.getTestMethod());
+    }
 
     public interface WaitForCondition {
 

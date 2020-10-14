@@ -65,7 +65,7 @@ public class LearnerSessionTracker extends UpgradeableSessionTracker {
         this.touchTable.set(new ConcurrentHashMap<Long, Integer>());
         this.globalSessionsWithTimeouts = sessionsWithTimeouts;
         this.serverId = id;
-        nextSessionId.set(SessionTrackerImpl.initializeNextSession(serverId));
+        nextSessionId.set(SessionTrackerImpl.initializeNextSessionId(serverId));
 
         this.localSessionsEnabled = localSessionsEnabled;
         if (this.localSessionsEnabled) {
@@ -113,7 +113,7 @@ public class LearnerSessionTracker extends UpgradeableSessionTracker {
         if (added) {
             // Only do extra logging so we know what kind of session this is
             // if we're supporting both kinds of sessions
-            LOG.info("Committing global session 0x" + Long.toHexString(sessionId));
+            LOG.info("Committing global session 0x{}", Long.toHexString(sessionId));
         }
 
         // If the session moved before the session upgrade finished, it's

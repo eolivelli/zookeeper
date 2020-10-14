@@ -18,9 +18,9 @@
 
 package org.apache.zookeeper.test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -37,7 +37,8 @@ import org.apache.zookeeper.server.quorum.QuorumPeer.LearnerType;
 import org.apache.zookeeper.server.quorum.QuorumPeer.QuorumServer;
 import org.apache.zookeeper.server.quorum.QuorumPeer.ServerState;
 import org.apache.zookeeper.server.util.OSMXBean;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -70,18 +71,14 @@ public class QuorumBase extends ClientBase {
     protected boolean localSessionsEnabled = false;
     protected boolean localSessionsUpgradingEnabled = false;
 
-    @Test
-    // This just avoids complaints by junit
-    public void testNull() {
-    }
-
+    @BeforeEach
     @Override
     public void setUp() throws Exception {
         setUp(false);
     }
 
     protected void setUp(boolean withObservers) throws Exception {
-        LOG.info("QuorumBase.setup " + getTestName());
+        LOG.info("QuorumBase.setup {}", getTestName());
         setupTestEnv();
 
         JMXEnv.setUp();
@@ -116,7 +113,7 @@ public class QuorumBase extends ClientBase {
                            + portClient4
                            + ",127.0.0.1:"
                            + portClient5;
-        LOG.info("Ports are: " + hostPort);
+        LOG.info("Ports are: {}", hostPort);
 
         s1dir = ClientBase.createTmpDir();
         s2dir = ClientBase.createTmpDir();
@@ -128,7 +125,7 @@ public class QuorumBase extends ClientBase {
 
         OSMXBean osMbean = new OSMXBean();
         if (osMbean.getUnix()) {
-            LOG.info("Initial fdcount is: " + osMbean.getOpenFileDescriptorCount());
+            LOG.info("Initial fdcount is: {}", osMbean.getOpenFileDescriptorCount());
         }
 
         LOG.info("Setup finished");
@@ -155,19 +152,19 @@ public class QuorumBase extends ClientBase {
             peers.get(Long.valueOf(5)).type = LearnerType.OBSERVER;
         }
 
-        LOG.info("creating QuorumPeer 1 port " + portClient1);
+        LOG.info("creating QuorumPeer 1 port {}", portClient1);
         s1 = new QuorumPeer(peers, s1dir, s1dir, portClient1, 3, 1, tickTime, initLimit, syncLimit, connectToLearnerMasterLimit);
         assertEquals(portClient1, s1.getClientPort());
-        LOG.info("creating QuorumPeer 2 port " + portClient2);
+        LOG.info("creating QuorumPeer 2 port {}", portClient2);
         s2 = new QuorumPeer(peers, s2dir, s2dir, portClient2, 3, 2, tickTime, initLimit, syncLimit, connectToLearnerMasterLimit);
         assertEquals(portClient2, s2.getClientPort());
-        LOG.info("creating QuorumPeer 3 port " + portClient3);
+        LOG.info("creating QuorumPeer 3 port {}", portClient3);
         s3 = new QuorumPeer(peers, s3dir, s3dir, portClient3, 3, 3, tickTime, initLimit, syncLimit, connectToLearnerMasterLimit);
         assertEquals(portClient3, s3.getClientPort());
-        LOG.info("creating QuorumPeer 4 port " + portClient4);
+        LOG.info("creating QuorumPeer 4 port {}", portClient4);
         s4 = new QuorumPeer(peers, s4dir, s4dir, portClient4, 3, 4, tickTime, initLimit, syncLimit, connectToLearnerMasterLimit);
         assertEquals(portClient4, s4.getClientPort());
-        LOG.info("creating QuorumPeer 5 port " + portClient5);
+        LOG.info("creating QuorumPeer 5 port {}", portClient5);
         s5 = new QuorumPeer(peers, s5dir, s5dir, portClient5, 3, 5, tickTime, initLimit, syncLimit, connectToLearnerMasterLimit);
         assertEquals(portClient5, s5.getClientPort());
 
@@ -176,11 +173,11 @@ public class QuorumBase extends ClientBase {
             s5.setLearnerType(LearnerType.OBSERVER);
         }
 
-        LOG.info("QuorumPeer 1 voting view: " + s1.getVotingView());
-        LOG.info("QuorumPeer 2 voting view: " + s2.getVotingView());
-        LOG.info("QuorumPeer 3 voting view: " + s3.getVotingView());
-        LOG.info("QuorumPeer 4 voting view: " + s4.getVotingView());
-        LOG.info("QuorumPeer 5 voting view: " + s5.getVotingView());
+        LOG.info("QuorumPeer 1 voting view: {}", s1.getVotingView());
+        LOG.info("QuorumPeer 2 voting view: {}", s2.getVotingView());
+        LOG.info("QuorumPeer 3 voting view: {}", s3.getVotingView());
+        LOG.info("QuorumPeer 4 voting view: {}", s4.getVotingView());
+        LOG.info("QuorumPeer 5 voting view: {}", s5.getVotingView());
 
         s1.enableLocalSessions(localSessionsEnabled);
         s2.enableLocalSessions(localSessionsEnabled);
@@ -205,10 +202,10 @@ public class QuorumBase extends ClientBase {
         s5.start();
         LOG.info("started QuorumPeer 5");
 
-        LOG.info("Checking ports " + hostPort);
+        LOG.info("Checking ports {}", hostPort);
         for (String hp : hostPort.split(",")) {
-            assertTrue("waiting for server up", ClientBase.waitForServerUp(hp, CONNECTION_TIMEOUT));
-            LOG.info(hp + " is accepting client connections");
+            assertTrue(ClientBase.waitForServerUp(hp, CONNECTION_TIMEOUT), "waiting for server up");
+            LOG.info("{} is accepting client connections", hp);
         }
 
         // interesting to see what's there...
@@ -245,6 +242,66 @@ public class QuorumBase extends ClientBase {
             return 4;
         }
         return -1;
+    }
+
+    public int getLeaderClientPort() {
+      if (s1.getPeerState() == ServerState.LEADING) {
+        return portClient1;
+      } else if (s2.getPeerState() == ServerState.LEADING) {
+        return portClient2;
+      } else if (s3.getPeerState() == ServerState.LEADING) {
+        return portClient3;
+      } else if (s4.getPeerState() == ServerState.LEADING) {
+        return portClient4;
+      } else if (s5.getPeerState() == ServerState.LEADING) {
+        return portClient5;
+      }
+      return -1;
+    }
+
+    public QuorumPeer getLeaderQuorumPeer() {
+      if (s1.getPeerState() == ServerState.LEADING) {
+        return s1;
+      } else if (s2.getPeerState() == ServerState.LEADING) {
+        return s2;
+      } else if (s3.getPeerState() == ServerState.LEADING) {
+        return s3;
+      } else if (s4.getPeerState() == ServerState.LEADING) {
+        return s4;
+      } else if (s5.getPeerState() == ServerState.LEADING) {
+        return s5;
+      }
+      return null;
+    }
+
+    public QuorumPeer getFirstObserver() {
+      if (s1.getLearnerType() == LearnerType.OBSERVER) {
+        return s1;
+      } else if (s2.getLearnerType() == LearnerType.OBSERVER) {
+        return s2;
+      } else if (s3.getLearnerType() == LearnerType.OBSERVER) {
+        return s3;
+      } else if (s4.getLearnerType() == LearnerType.OBSERVER) {
+        return s4;
+      } else if (s5.getLearnerType() == LearnerType.OBSERVER) {
+        return s5;
+      }
+      return null;
+    }
+
+    public int getFirstObserverClientPort() {
+      if (s1.getLearnerType() == LearnerType.OBSERVER) {
+        return portClient1;
+      } else if (s2.getLearnerType() == LearnerType.OBSERVER) {
+        return portClient2;
+      } else if (s3.getLearnerType() == LearnerType.OBSERVER) {
+        return portClient3;
+      } else if (s4.getLearnerType() == LearnerType.OBSERVER) {
+        return portClient4;
+      } else if (s5.getLearnerType() == LearnerType.OBSERVER) {
+        return portClient5;
+      }
+      return -1;
     }
 
     public String getPeersMatching(ServerState state) {
@@ -304,46 +361,47 @@ public class QuorumBase extends ClientBase {
 
         switch (i) {
         case 1:
-            LOG.info("creating QuorumPeer 1 port " + portClient1);
+            LOG.info("creating QuorumPeer 1 port {}", portClient1);
             s1 = new QuorumPeer(peers, s1dir, s1dir, portClient1, 3, 1, tickTime, initLimit, syncLimit, connectToLearnerMasterLimit);
             assertEquals(portClient1, s1.getClientPort());
             break;
         case 2:
-            LOG.info("creating QuorumPeer 2 port " + portClient2);
+            LOG.info("creating QuorumPeer 2 port {}", portClient2);
             s2 = new QuorumPeer(peers, s2dir, s2dir, portClient2, 3, 2, tickTime, initLimit, syncLimit, connectToLearnerMasterLimit);
             assertEquals(portClient2, s2.getClientPort());
             break;
         case 3:
-            LOG.info("creating QuorumPeer 3 port " + portClient3);
+            LOG.info("creating QuorumPeer 3 port {}", portClient3);
             s3 = new QuorumPeer(peers, s3dir, s3dir, portClient3, 3, 3, tickTime, initLimit, syncLimit, connectToLearnerMasterLimit);
             assertEquals(portClient3, s3.getClientPort());
             break;
         case 4:
-            LOG.info("creating QuorumPeer 4 port " + portClient4);
+            LOG.info("creating QuorumPeer 4 port {}", portClient4);
             s4 = new QuorumPeer(peers, s4dir, s4dir, portClient4, 3, 4, tickTime, initLimit, syncLimit, connectToLearnerMasterLimit);
             assertEquals(portClient4, s4.getClientPort());
             break;
         case 5:
-            LOG.info("creating QuorumPeer 5 port " + portClient5);
+            LOG.info("creating QuorumPeer 5 port {}", portClient5);
             s5 = new QuorumPeer(peers, s5dir, s5dir, portClient5, 3, 5, tickTime, initLimit, syncLimit, connectToLearnerMasterLimit);
             assertEquals(portClient5, s5.getClientPort());
         }
     }
 
+    @AfterEach
     @Override
     public void tearDown() throws Exception {
         LOG.info("TearDown started");
 
         OSMXBean osMbean = new OSMXBean();
         if (osMbean.getUnix()) {
-            LOG.info("fdcount after test is: " + osMbean.getOpenFileDescriptorCount());
+            LOG.info("fdcount after test is: {}", osMbean.getOpenFileDescriptorCount());
         }
 
         shutdownServers();
 
         for (String hp : hostPort.split(",")) {
-            assertTrue("waiting for server down", ClientBase.waitForServerDown(hp, ClientBase.CONNECTION_TIMEOUT));
-            LOG.info(hp + " is no longer accepting client connections");
+            assertTrue(ClientBase.waitForServerDown(hp, ClientBase.CONNECTION_TIMEOUT), "waiting for server down");
+            LOG.info("{} is no longer accepting client connections", hp);
         }
 
         JMXEnv.tearDown();
@@ -361,16 +419,16 @@ public class QuorumBase extends ClientBase {
             return;
         }
         try {
-            LOG.info("Shutting down quorum peer " + qp.getName());
+            LOG.info("Shutting down quorum peer {}", qp.getName());
             qp.shutdown();
             Election e = qp.getElectionAlg();
             if (e != null) {
-                LOG.info("Shutting down leader election " + qp.getName());
+                LOG.info("Shutting down leader election {}", qp.getName());
                 e.shutdown();
             } else {
-                LOG.info("No election available to shutdown " + qp.getName());
+                LOG.info("No election available to shutdown {}", qp.getName());
             }
-            LOG.info("Waiting for " + qp.getName() + " to exit thread");
+            LOG.info("Waiting for {} to exit thread", qp.getName());
             long readTimeout = qp.getTickTime() * qp.getInitLimit();
             long connectTimeout = qp.getTickTime() * qp.getSyncLimit();
             long maxTimeout = Math.max(readTimeout, connectTimeout);
@@ -380,7 +438,7 @@ public class QuorumBase extends ClientBase {
                 fail("QP failed to shutdown in " + (maxTimeout * 2) + " seconds: " + qp.getName());
             }
         } catch (InterruptedException e) {
-            LOG.debug("QP interrupted: " + qp.getName(), e);
+            LOG.debug("QP interrupted: {}", qp.getName(), e);
         }
     }
 

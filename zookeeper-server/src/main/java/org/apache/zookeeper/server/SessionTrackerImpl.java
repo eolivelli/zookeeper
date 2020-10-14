@@ -83,10 +83,18 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     }
 
     /**
-     * Generates an initial sessionId. High order byte is serverId, next 5
-     * 5 bytes are from timestamp, and low order 2 bytes are 0s.
+     * Generates an initial sessionId.
+     *
+     * <p>High order 1 byte is serverId, next 5 bytes are from timestamp, and low order 2 bytes are 0s.
+     * Use {@literal ">>> 8"}, not {@literal ">> 8"} to make sure that the high order 1 byte is entirely
+     * up to the server Id.
+     *
+     * <p>See also http://jira.apache.org/jira/browse/ZOOKEEPER-1622
+     *
+     * @param id server Id
+     * @return the session Id
      */
-    public static long initializeNextSession(long id) {
+    public static long initializeNextSessionId(long id) {
         long nextSid;
         nextSid = (Time.currentElapsedTime() << 24) >>> 8;
         nextSid = nextSid | (id << 56);
@@ -103,7 +111,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
         this.expirer = expirer;
         this.sessionExpiryQueue = new ExpiryQueue<SessionImpl>(tickTime);
         this.sessionsWithTimeout = sessionsWithTimeout;
-        this.nextSessionId.set(initializeNextSession(serverId));
+        this.nextSessionId.set(initializeNextSessionId(serverId));
         for (Entry<Long, Integer> e : sessionsWithTimeout.entrySet()) {
             trackSession(e.getKey(), e.getValue());
         }
@@ -190,17 +198,15 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     }
 
     private void logTraceTouchSession(long sessionId, int timeout, String sessionStatus) {
-        if (!LOG.isTraceEnabled()) {
-            return;
+        if (LOG.isTraceEnabled()) {
+            String msg = MessageFormat.format(
+                "SessionTrackerImpl --- Touch {0}session: 0x{1} with timeout {2}",
+                sessionStatus,
+                Long.toHexString(sessionId),
+                Integer.toString(timeout));
+
+            ZooTrace.logTraceMessage(LOG, ZooTrace.CLIENT_PING_TRACE_MASK, msg);
         }
-
-        String msg = MessageFormat.format(
-            "SessionTrackerImpl --- Touch {0}session: 0x{1} with timeout {2}",
-            sessionStatus,
-            Long.toHexString(sessionId),
-            Integer.toString(timeout));
-
-        ZooTrace.logTraceMessage(LOG, ZooTrace.CLIENT_PING_TRACE_MASK, msg);
     }
 
     private void logTraceTouchInvalidSession(long sessionId, int timeout) {
@@ -217,8 +223,9 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
 
     public synchronized void setSessionClosing(long sessionId) {
         if (LOG.isTraceEnabled()) {
-            LOG.trace("Session closing: 0x" + Long.toHexString(sessionId));
+            LOG.trace("Session closing: 0x{}", Long.toHexString(sessionId));
         }
+
         SessionImpl s = sessionsById.get(sessionId);
         if (s == null) {
             return;
@@ -227,9 +234,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     }
 
     public synchronized void removeSession(long sessionId) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("Removing session 0x{}", Long.toHexString(sessionId));
-        }
+        LOG.debug("Removing session 0x{}", Long.toHexString(sessionId));
         SessionImpl s = sessionsById.remove(sessionId);
         sessionsWithTimeout.remove(sessionId);
         if (LOG.isTraceEnabled()) {
@@ -275,9 +280,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
             session = existedSession;
         } else {
             added = true;
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("Adding session 0x{}", Long.toHexString(id));
-            }
+            LOG.debug("Adding session 0x{}", Long.toHexString(id));
         }
 
         if (LOG.isTraceEnabled()) {
@@ -302,9 +305,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     }
 
     public synchronized void checkSession(long sessionId, Object owner) throws KeeperException.SessionExpiredException, KeeperException.SessionMovedException, KeeperException.UnknownSessionException {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("Checking session 0x" + Long.toHexString(sessionId));
-        }
+        LOG.debug("Checking session 0x{}", Long.toHexString(sessionId));
         SessionImpl session = sessionsById.get(sessionId);
 
         if (session == null) {

@@ -22,6 +22,7 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
@@ -293,11 +294,12 @@ public class ObserverMaster extends LearnerMaster implements Runnable {
         if (itr.hasNext()) {
             QuorumPacket packet = itr.next();
             if (packet.getZxid() > lastSeenZxid + 1) {
-                LOG.error("LearnerHandler is too far behind ({} < {}), disconnecting {} at {}",
-                          Long.toHexString(lastSeenZxid + 1),
-                          Long.toHexString(packet.getZxid()),
-                          learnerHandler.getSid(),
-                          learnerHandler.getRemoteAddress());
+                LOG.error(
+                    "LearnerHandler is too far behind (0x{} < 0x{}), disconnecting {} at {}",
+                    Long.toHexString(lastSeenZxid + 1),
+                    Long.toHexString(packet.getZxid()),
+                    learnerHandler.getSid(),
+                    learnerHandler.getRemoteAddress());
                 learnerHandler.shutdown();
                 return -1;
             } else if (packet.getZxid() == lastSeenZxid + 1) {
@@ -313,15 +315,16 @@ public class ObserverMaster extends LearnerMaster implements Runnable {
                 learnerHandler.queuePacket(packet);
                 queueBytesUsed += LearnerHandler.packetSize(packet);
             }
-            LOG.info("finished syncing observer from retained commit queue: sid {}, "
-                     + "queue head 0x{}, queue tail 0x{}, sync position 0x{}, num packets used {}, "
-                     + "num bytes used {}",
-                     learnerHandler.getSid(),
-                     Long.toHexString(queueHeadZxid),
-                     Long.toHexString(packet.getZxid()),
-                     Long.toHexString(lastSeenZxid),
-                     packet.getZxid() - lastSeenZxid,
-                     queueBytesUsed);
+            LOG.info(
+                "finished syncing observer from retained commit queue: sid {}, "
+                    + "queue head 0x{}, queue tail 0x{}, sync position 0x{}, num packets used {}, "
+                    + "num bytes used {}",
+                learnerHandler.getSid(),
+                Long.toHexString(queueHeadZxid),
+                Long.toHexString(packet.getZxid()),
+                Long.toHexString(lastSeenZxid),
+                packet.getZxid() - lastSeenZxid,
+                queueBytesUsed);
         }
         activeObservers.add(learnerHandler);
         return lastProposedZxid;
@@ -427,23 +430,19 @@ public class ObserverMaster extends LearnerMaster implements Runnable {
         }
         listenerRunning = true;
         int backlog = 10; // dog science
+        InetAddress address = self.getQuorumAddress().getReachableOrOne().getAddress();
         if (self.shouldUsePortUnification() || self.isSslQuorum()) {
             boolean allowInsecureConnection = self.shouldUsePortUnification();
             if (self.getQuorumListenOnAllIPs()) {
                 ss = new UnifiedServerSocket(self.getX509Util(), allowInsecureConnection, port, backlog);
             } else {
-                ss = new UnifiedServerSocket(
-                    self.getX509Util(),
-                    allowInsecureConnection,
-                    port,
-                    backlog,
-                    self.getQuorumAddress().getAddress());
+                ss = new UnifiedServerSocket(self.getX509Util(), allowInsecureConnection, port, backlog, address);
             }
         } else {
             if (self.getQuorumListenOnAllIPs()) {
                 ss = new ServerSocket(port, backlog);
             } else {
-                ss = new ServerSocket(port, backlog, self.getQuorumAddress().getAddress());
+                ss = new ServerSocket(port, backlog, address);
             }
         }
         thread = new Thread(this, "ObserverMaster");

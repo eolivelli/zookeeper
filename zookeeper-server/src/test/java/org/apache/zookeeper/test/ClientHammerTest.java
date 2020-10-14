@@ -18,7 +18,7 @@
 
 package org.apache.zookeeper.test;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.io.IOException;
 import java.util.Date;
 import java.util.List;
@@ -27,7 +27,7 @@ import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.common.Time;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -201,7 +201,7 @@ public class ClientHammerTest extends ClientBase {
         }
         if (workingCount > 0) {
             for (HammerThread h : threads) {
-                LOG.warn(h.getName() + " never finished creation, current:" + h.current);
+                LOG.warn("{} never finished creation, current:{}", h.getName(), h.current);
             }
         } else {
             LOG.info("Hammer threads completed creation operations");
@@ -214,13 +214,13 @@ public class ClientHammerTest extends ClientBase {
                                               * HAMMERTHREAD_LATENCY
                                               * (long) safetyFactor);
         }
-        LOG.info(new Date() + " Total time " + (Time.currentElapsedTime() - start));
+        LOG.info("{} Total time {}", new Date(), (Time.currentElapsedTime() - start));
 
         ZooKeeper zk = createClient();
         try {
-            LOG.info("******************* Connected to ZooKeeper" + new Date());
+            LOG.info("******************* Connected to ZooKeeper{}", new Date());
             for (int i = 0; i < threads.length; i++) {
-                LOG.info("Doing thread: " + i + " " + new Date());
+                LOG.info("Doing thread: {} {}", i, new Date());
                 List<String> children = zk.getChildren("/test-" + i, false);
                 assertEquals(childCount, children.size());
                 children = zk.getChildren("/test-" + i, false, null);

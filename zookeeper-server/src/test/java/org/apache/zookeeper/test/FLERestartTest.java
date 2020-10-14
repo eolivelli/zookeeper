@@ -18,7 +18,7 @@
 
 package org.apache.zookeeper.test;
 
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.File;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -33,9 +33,9 @@ import org.apache.zookeeper.server.quorum.QuorumPeer;
 import org.apache.zookeeper.server.quorum.QuorumPeer.QuorumServer;
 import org.apache.zookeeper.server.quorum.QuorumPeer.ServerState;
 import org.apache.zookeeper.server.quorum.Vote;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,7 +71,7 @@ public class FLERestartTest extends ZKTestCase {
         return counter;
     }
 
-    @Before
+    @BeforeEach
     public void setUp() throws Exception {
         count = 3;
         peers = new HashMap<Long, QuorumServer>(count);
@@ -81,7 +81,7 @@ public class FLERestartTest extends ZKTestCase {
         finish = new Semaphore(0);
     }
 
-    @After
+    @AfterEach
     public void tearDown() throws Exception {
         for (int i = 0; i < restartThreads.size(); i++) {
             restartThreads.get(i).peer.getElectionAlg().shutdown();
@@ -97,7 +97,7 @@ public class FLERestartTest extends ZKTestCase {
         FLERestartThread(QuorumPeer peer, int i) {
             this.i = i;
             this.peer = peer;
-            LOG.info("Constructor: " + getName());
+            LOG.info("Constructor: {}", getName());
         }
         public void run() {
             try {
@@ -107,7 +107,7 @@ public class FLERestartTest extends ZKTestCase {
                     LOG.info("Going to call leader election again.");
                     v = peer.getElectionAlg().lookForLeader();
                     if (v == null) {
-                        LOG.info("Thread " + i + " got a null vote");
+                        LOG.info("Thread {} got a null vote", i);
                         break;
                     }
 
@@ -117,7 +117,7 @@ public class FLERestartTest extends ZKTestCase {
                      */
                     peer.setCurrentVote(v);
 
-                    LOG.info("Finished election: " + i + ", " + v.getId());
+                    LOG.info("Finished election: {}, {}", i, v.getId());
                     //votes[i] = v;
 
                     switch (i) {
@@ -162,9 +162,9 @@ public class FLERestartTest extends ZKTestCase {
     @Test
     public void testLERestart() throws Exception {
 
-        LOG.info("TestLE: " + getTestName() + ", " + count);
+        LOG.info("TestLE: {}, {}", getTestName(), count);
         for (int i = 0; i < count; i++) {
-            peers.put(Long.valueOf(i), new QuorumServer(i, new InetSocketAddress("127.0.0.1", PortAssignment.unique()), new InetSocketAddress("127.0.0.1", PortAssignment.unique())));
+            peers.put((long) i, new QuorumServer(i, new InetSocketAddress("127.0.0.1", PortAssignment.unique()), new InetSocketAddress("127.0.0.1", PortAssignment.unique())));
             tmpdir[i] = ClientBase.createTmpDir();
             port[i] = PortAssignment.unique();
         }
@@ -176,7 +176,7 @@ public class FLERestartTest extends ZKTestCase {
             thread.start();
             restartThreads.add(thread);
         }
-        LOG.info("Started threads " + getTestName());
+        LOG.info("Started threads {}", getTestName());
         for (int i = 0; i < restartThreads.size(); i++) {
             restartThreads.get(i).join(10000);
             if (restartThreads.get(i).isAlive()) {

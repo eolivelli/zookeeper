@@ -18,15 +18,15 @@
 
 package org.apache.zookeeper.server.quorum;
 
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import org.apache.zookeeper.AsyncCallback;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper.States;
 import org.apache.zookeeper.server.ZooKeeperServer;
-import org.junit.Assert;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class CloseSessionTxnTest extends QuorumPeerTestBase {
 
@@ -89,14 +89,9 @@ public class CloseSessionTxnTest extends QuorumPeerTestBase {
         // 4. verify the ephemeral node is gone
         for (int i = 0; i < numServers; i++) {
             final CountDownLatch syncedLatch = new CountDownLatch(1);
-            servers.zk[i].sync(path, new AsyncCallback.VoidCallback() {
-                @Override
-                public void processResult(int rc, String path, Object ctx) {
-                    syncedLatch.countDown();
-                }
-            }, null);
-            Assert.assertTrue(syncedLatch.await(3, TimeUnit.SECONDS));
-            Assert.assertNull(servers.zk[i].exists(path, false));
+            servers.zk[i].sync(path, (rc, path1, ctx) -> syncedLatch.countDown(), null);
+            assertTrue(syncedLatch.await(3, TimeUnit.SECONDS));
+            assertNull(servers.zk[i].exists(path, false));
         }
     }
  }

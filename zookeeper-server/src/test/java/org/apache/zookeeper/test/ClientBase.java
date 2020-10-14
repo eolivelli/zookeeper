@@ -19,10 +19,10 @@
 package org.apache.zookeeper.test;
 
 import static org.apache.zookeeper.client.FourLetterWordMain.send4LetterWord;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -60,8 +60,8 @@ import org.apache.zookeeper.server.ZooKeeperServer;
 import org.apache.zookeeper.server.persistence.FilePadding;
 import org.apache.zookeeper.server.quorum.QuorumPeer;
 import org.apache.zookeeper.server.util.OSMXBean;
-import org.junit.After;
-import org.junit.Before;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -70,7 +70,6 @@ public abstract class ClientBase extends ZKTestCase {
     protected static final Logger LOG = LoggerFactory.getLogger(ClientBase.class);
 
     public static int CONNECTION_TIMEOUT = 30000;
-    static final File BASETEST = new File(System.getProperty("build.test.dir", "build"));
 
     protected String hostPort = "127.0.0.1:" + PortAssignment.unique();
     protected int maxCnxns = 0;
@@ -82,18 +81,6 @@ public abstract class ClientBase extends ZKTestCase {
 
     public ClientBase() {
         super();
-    }
-
-    /**
-     * In general don't use this. Only use in the special case that you
-     * want to ignore results (for whatever reason) in your test. Don't
-     * use empty watchers in real code!
-     *
-     */
-    protected static class NullWatcher implements Watcher {
-
-        public void process(WatchedEvent event) { /* nada */ }
-
     }
 
     public static class CountdownWatcher implements Watcher {
@@ -350,17 +337,17 @@ public abstract class ClientBase extends ZKTestCase {
     static void verifyThreadTerminated(Thread thread, long millis) throws InterruptedException {
         thread.join(millis);
         if (thread.isAlive()) {
-            LOG.error("Thread " + thread.getName() + " : " + Arrays.toString(thread.getStackTrace()));
-            assertFalse("thread " + thread.getName() + " still alive after join", true);
+            LOG.error("Thread {} : {}", thread.getName(), Arrays.toString(thread.getStackTrace()));
+            assertFalse(true, "thread " + thread.getName() + " still alive after join");
         }
     }
 
     public static File createEmptyTestDir() throws IOException {
-        return createTmpDir(BASETEST, false);
+        return createTmpDir(testBaseDir, false);
     }
 
     public static File createTmpDir() throws IOException {
-        return createTmpDir(BASETEST, true);
+        return createTmpDir(testBaseDir, true);
     }
 
     static File createTmpDir(File parentDir, boolean createInitFile) throws IOException {
@@ -410,8 +397,8 @@ public abstract class ClientBase extends ZKTestCase {
         zks.setCreateSessionTrackerServerId(serverId);
         factory.startup(zks);
         assertTrue(
-                "waiting for server up",
-                ClientBase.waitForServerUp("127.0.0.1:" + port, CONNECTION_TIMEOUT, factory.isSecure()));
+                ClientBase.waitForServerUp("127.0.0.1:" + port, CONNECTION_TIMEOUT, factory.isSecure()),
+                "waiting for server up");
     }
 
     /**
@@ -460,8 +447,8 @@ public abstract class ClientBase extends ZKTestCase {
             final int PORT = getPort(hostPort);
 
             assertTrue(
-                    "waiting for server down",
-                    ClientBase.waitForServerDown("127.0.0.1:" + PORT, CONNECTION_TIMEOUT, factory.isSecure()));
+                    ClientBase.waitForServerDown("127.0.0.1:" + PORT, CONNECTION_TIMEOUT, factory.isSecure()),
+                    "waiting for server down");
         }
     }
 
@@ -482,7 +469,7 @@ public abstract class ClientBase extends ZKTestCase {
         allClientsSetup = true;
     }
 
-    @Before
+    @BeforeEach
     public void setUp() throws Exception {
         setUpWithServerId(1);
     }
@@ -496,7 +483,7 @@ public abstract class ClientBase extends ZKTestCase {
         OSMXBean osMbean = new OSMXBean();
         if (osMbean.getUnix()) {
             initialFdCount = osMbean.getOpenFileDescriptorCount();
-            LOG.info("Initial fdcount is: " + initialFdCount);
+            LOG.info("Initial fdcount is: {}", initialFdCount);
         }
 
         setupTestEnv();
@@ -507,7 +494,7 @@ public abstract class ClientBase extends ZKTestCase {
 
         setUpAll();
 
-        tmpDir = createTmpDir(BASETEST, true);
+        tmpDir = createTmpDir(testBaseDir, true);
 
         startServer(serverId);
 
@@ -543,16 +530,16 @@ public abstract class ClientBase extends ZKTestCase {
                 while (childItr.hasNext()) {
                     ObjectName clientBean = childItr.next();
                     if (clientBean.toString().contains(getHexSessionId(zkc.getSessionId()))) {
-                        LOG.info("found name:" + zkc.getSessionId() + " client bean:" + clientBean.toString());
+                        LOG.info("found name:{} client bean:{}", zkc.getSessionId(), clientBean.toString());
                         childItr.remove();
                     }
                 }
             }
         }
         for (ObjectName bean : children) {
-            LOG.info("unexpected:" + bean.toString());
+            LOG.info("unexpected:{}", bean.toString());
         }
-        assertEquals("Unexpected bean exists!", 0, children.size());
+        assertEquals(0, children.size(), "Unexpected bean exists!");
     }
 
     /**
@@ -591,7 +578,7 @@ public abstract class ClientBase extends ZKTestCase {
         }
     }
 
-    @After
+    @AfterEach
     public void tearDown() throws Exception {
         LOG.info("tearDown starting");
 
@@ -600,7 +587,7 @@ public abstract class ClientBase extends ZKTestCase {
         stopServer();
 
         if (tmpDir != null) {
-            assertTrue("delete " + tmpDir.toString(), recursiveDelete(tmpDir));
+            assertTrue(recursiveDelete(tmpDir), "delete " + tmpDir.toString());
         }
 
         // This has to be set to null when the same instance of this class is reused between test cases
@@ -684,7 +671,7 @@ public abstract class ClientBase extends ZKTestCase {
             }
 
             if (Arrays.equals(newcounts, counts)) {
-                LOG.info("Found match with array:" + Arrays.toString(newcounts));
+                LOG.info("Found match with array:{}", Arrays.toString(newcounts));
                 counts = newcounts;
                 break;
             } else {
@@ -702,9 +689,9 @@ public abstract class ClientBase extends ZKTestCase {
         String logmsg = "node count not consistent{} {}";
         for (int i = 1; i < parts.length; i++) {
             if (counts[i - 1] != counts[i]) {
-                LOG.error(logmsg, Integer.valueOf(counts[i - 1]), Integer.valueOf(counts[i]));
+                LOG.error(logmsg, counts[i - 1], counts[i]);
             } else {
-                LOG.info(logmsg, Integer.valueOf(counts[i - 1]), Integer.valueOf(counts[i]));
+                LOG.info(logmsg, counts[i - 1], counts[i]);
             }
         }
     }
@@ -748,10 +735,14 @@ public abstract class ClientBase extends ZKTestCase {
      *             in cases of network failure
      */
     public static ZooKeeper createZKClient(String cxnString, int sessionTimeout) throws IOException {
+        return createZKClient(cxnString, sessionTimeout, CONNECTION_TIMEOUT);
+    }
+
+    public static ZooKeeper createZKClient(String cxnString, int sessionTimeout, long connectionTimeout) throws IOException {
         CountdownWatcher watcher = new CountdownWatcher();
         ZooKeeper zk = new ZooKeeper(cxnString, sessionTimeout, watcher);
         try {
-            watcher.waitForConnected(CONNECTION_TIMEOUT);
+            watcher.waitForConnected(connectionTimeout);
         } catch (InterruptedException | TimeoutException e) {
             fail("ZooKeeper client can not connect to " + cxnString);
         }

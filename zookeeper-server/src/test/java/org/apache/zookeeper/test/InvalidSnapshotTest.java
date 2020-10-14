@@ -19,7 +19,7 @@
 package org.apache.zookeeper.test;
 
 import static org.apache.zookeeper.test.ClientBase.CONNECTION_TIMEOUT;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.File;
 import org.apache.zookeeper.PortAssignment;
 import org.apache.zookeeper.ZKTestCase;
@@ -28,7 +28,7 @@ import org.apache.zookeeper.server.ServerCnxnFactory;
 import org.apache.zookeeper.server.SnapshotFormatter;
 import org.apache.zookeeper.server.SyncRequestProcessor;
 import org.apache.zookeeper.server.ZooKeeperServer;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,18 +38,6 @@ public class InvalidSnapshotTest extends ZKTestCase {
     private static final String HOSTPORT = "127.0.0.1:" + PortAssignment.unique();
 
     private static final File testData = new File(System.getProperty("test.data.dir", "src/test/resources/data"));
-
-    /**
-     * Verify the LogFormatter by running it on a known file.
-     */
-    @SuppressWarnings("deprecation")
-    @Test
-    public void testLogFormatter() throws Exception {
-        File snapDir = new File(testData, "invalidsnap");
-        File logfile = new File(new File(snapDir, "version-2"), "log.274");
-        String[] args = {logfile.getCanonicalFile().toString()};
-        org.apache.zookeeper.server.LogFormatter.main(args);
-    }
 
     /**
      * Verify the SnapshotFormatter by running it on a known file.
@@ -86,7 +74,7 @@ public class InvalidSnapshotTest extends ZKTestCase {
         ServerCnxnFactory f = ServerCnxnFactory.createFactory(PORT, -1);
         f.startup(zks);
         LOG.info("starting up the zookeeper server .. waiting");
-        assertTrue("waiting for server being up", ClientBase.waitForServerUp(HOSTPORT, CONNECTION_TIMEOUT));
+        assertTrue(ClientBase.waitForServerUp(HOSTPORT, CONNECTION_TIMEOUT), "waiting for server being up");
         ZooKeeper zk = ClientBase.createZKClient(HOSTPORT);
         try {
             // we know this from the data files
@@ -98,7 +86,7 @@ public class InvalidSnapshotTest extends ZKTestCase {
         }
         f.shutdown();
         zks.shutdown();
-        assertTrue("waiting for server down", ClientBase.waitForServerDown(HOSTPORT, ClientBase.CONNECTION_TIMEOUT));
+        assertTrue(ClientBase.waitForServerDown(HOSTPORT, ClientBase.CONNECTION_TIMEOUT), "waiting for server down");
 
     }
 

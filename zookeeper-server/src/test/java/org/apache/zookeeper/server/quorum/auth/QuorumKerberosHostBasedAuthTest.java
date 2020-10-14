@@ -18,7 +18,7 @@
 
 package org.apache.zookeeper.server.quorum.auth;
 
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
@@ -32,10 +32,11 @@ import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.server.quorum.QuorumPeerTestBase.MainThread;
 import org.apache.zookeeper.test.ClientBase;
 import org.apache.zookeeper.test.ClientBase.CountdownWatcher;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 public class QuorumKerberosHostBasedAuthTest extends KerberosSecurityTestcase {
 
@@ -53,6 +54,10 @@ public class QuorumKerberosHostBasedAuthTest extends KerberosSecurityTestcase {
         String hostLearnerPrincipal,
         String hostNamedLearnerPrincipal) {
         String keytabFilePath = FilenameUtils.normalize(KerberosTestUtils.getKeytabFile(), true);
+
+        // note: we use "refreshKrb5Config=true" to refresh the kerberos config in the JVM,
+        // making sure that we use the latest config even if other tests already have been executed
+        // and initialized the kerberos client configs before)
         String jaasEntries = "QuorumServer {\n"
                              + "       com.sun.security.auth.module.Krb5LoginModule required\n"
                              + "       useKeyTab=true\n"
@@ -61,6 +66,7 @@ public class QuorumKerberosHostBasedAuthTest extends KerberosSecurityTestcase {
                              + "       storeKey=true\n"
                              + "       useTicketCache=false\n"
                              + "       debug=false\n"
+                             + "       refreshKrb5Config=true\n"
                              + "       principal=\"" + KerberosTestUtils.replaceHostPattern(hostServerPrincipal)
                              + "\";\n"
                              + "};\n"
@@ -72,6 +78,7 @@ public class QuorumKerberosHostBasedAuthTest extends KerberosSecurityTestcase {
                              + "       storeKey=true\n"
                              + "       useTicketCache=false\n"
                              + "       debug=false\n"
+                             + "       refreshKrb5Config=true\n"
                              + "       principal=\"" + KerberosTestUtils.replaceHostPattern(hostLearnerPrincipal)
                              + "\";\n"
                              + "};\n"
@@ -83,13 +90,14 @@ public class QuorumKerberosHostBasedAuthTest extends KerberosSecurityTestcase {
                              + "       storeKey=true\n"
                              + "       useTicketCache=false\n"
                              + "       debug=false\n"
+                             + "       refreshKrb5Config=true\n"
                              + "       principal=\"" + hostNamedLearnerPrincipal
                              + "\";\n"
                              + "};\n";
         setupJaasConfig(jaasEntries);
     }
 
-    @BeforeClass
+    @BeforeAll
     public static void setUp() throws Exception {
         // create keytab
         keytabFile = new File(KerberosTestUtils.getKeytabFile());
@@ -105,15 +113,17 @@ public class QuorumKerberosHostBasedAuthTest extends KerberosSecurityTestcase {
         getKdc().createPrincipal(keytabFile, learnerPrincipal, learnerPrincipal2, serverPrincipal);
     }
 
-    @After
+    @AfterEach
+    @Override
     public void tearDown() throws Exception {
         for (MainThread mainThread : mt) {
             mainThread.shutdown();
             mainThread.deleteBaseDir();
         }
+        super.tearDown();
     }
 
-    @AfterClass
+    @AfterAll
     public static void cleanup() {
         if (keytabFile != null) {
             FileUtils.deleteQuietly(keytabFile);
@@ -124,7 +134,8 @@ public class QuorumKerberosHostBasedAuthTest extends KerberosSecurityTestcase {
     /**
      * Test to verify that server is able to start with valid credentials
      */
-    @Test(timeout = 120000)
+    @Test
+    @Timeout(value = 120)
     public void testValidCredentials() throws Exception {
         String serverPrincipal = hostServerPrincipal.substring(0, hostServerPrincipal.lastIndexOf("@"));
         Map<String, String> authConfigs = new HashMap<String, String>();
@@ -143,9 +154,33 @@ public class QuorumKerberosHostBasedAuthTest extends KerberosSecurityTestcase {
     }
 
     /**
+     * Test to verify that server is able to start with valid credentials
+     * when using multiple Quorum / Election addresses
+     */
+    @Test
+    @Timeout(value = 120)
+    public void testValidCredentialsWithMultiAddresses() throws Exception {
+        String serverPrincipal = hostServerPrincipal.substring(0, hostServerPrincipal.lastIndexOf("@"));
+        Map<String, String> authConfigs = new HashMap<String, String>();
+        authConfigs.put(QuorumAuth.QUORUM_SASL_AUTH_ENABLED, "true");
+        authConfigs.put(QuorumAuth.QUORUM_SERVER_SASL_AUTH_REQUIRED, "true");
+        authConfigs.put(QuorumAuth.QUORUM_LEARNER_SASL_AUTH_REQUIRED, "true");
+        authConfigs.put(QuorumAuth.QUORUM_KERBEROS_SERVICE_PRINCIPAL, serverPrincipal);
+        String connectStr = startMultiAddressQuorum(3, authConfigs, 3);
+        CountdownWatcher watcher = new CountdownWatcher();
+        ZooKeeper zk = new ZooKeeper(connectStr, ClientBase.CONNECTION_TIMEOUT, watcher);
+        watcher.waitForConnected(ClientBase.CONNECTION_TIMEOUT);
+        for (int i = 0; i < 10; i++) {
+            zk.create("/" + i, new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+        }
+        zk.close();
+    }
+
+    /**
      * Test to verify that the bad server connection to the quorum should be rejected.
      */
-    @Test(timeout = 120000)
+    @Test
+    @Timeout(value = 120)
     public void testConnectBadServer() throws Exception {
         String serverPrincipal = hostServerPrincipal.substring(0, hostServerPrincipal.lastIndexOf("@"));
         Map<String, String> authConfigs = new HashMap<String, String>();

@@ -20,8 +20,21 @@ package org.apache.zookeeper;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.apache.zookeeper.server.ExitCode;
+import org.apache.zookeeper.util.ServiceUtils;
 
 public class Version implements org.apache.zookeeper.version.Info {
+
+    /*
+     * Since the SVN to Git port this field doesn't return the revision anymore
+     * In version 3.5.6, 3.5.7 and 3.6.0 this function is removed by accident.
+     * From version 3.5.8+ and 3.6.1+ it is restored for backward compatibility, but will be removed later
+     * @deprecated deprecated in 3.5.5, use @see {@link #getRevisionHash()} instead
+     * @return the default value -1
+     */
+    @Deprecated
+    public static int getRevision() {
+        return REVISION;
+    }
 
     public static String getRevisionHash() {
         return REVISION_HASH;
@@ -48,7 +61,7 @@ public class Version implements org.apache.zookeeper.version.Info {
         System.out.print("Usage:\tjava -cp ... org.apache.zookeeper.Version "
                          + "[--full | --short | --revision],\n\tPrints --full version "
                          + "info if no arg specified.");
-        System.exit(ExitCode.UNEXPECTED_ERROR.getValue());
+        ServiceUtils.requestSystemExit(ExitCode.UNEXPECTED_ERROR.getValue());
     }
 
     /**
@@ -68,7 +81,7 @@ public class Version implements org.apache.zookeeper.version.Info {
         }
         if (args.length == 0 || (args.length == 1 && args[0].equals("--full"))) {
             System.out.println(getFullVersion());
-            System.exit(ExitCode.EXECUTION_FINISHED.getValue());
+            ServiceUtils.requestSystemExit(ExitCode.EXECUTION_FINISHED.getValue());
         }
         if (args[0].equals("--short")) {
             System.out.println(getVersion());
@@ -77,7 +90,7 @@ public class Version implements org.apache.zookeeper.version.Info {
         } else {
             printUsage();
         }
-        System.exit(ExitCode.EXECUTION_FINISHED.getValue());
+        ServiceUtils.requestSystemExit(ExitCode.EXECUTION_FINISHED.getValue());
     }
 
 }

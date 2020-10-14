@@ -18,7 +18,6 @@
 
 package org.apache.zookeeper.common;
 
-import com.sun.nio.file.SensitivityWatchEventModifier;
 import java.io.IOException;
 import java.nio.file.ClosedWatchServiceException;
 import java.nio.file.FileSystem;
@@ -72,7 +71,7 @@ public final class FileChangeWatcher {
 
         LOG.debug("Registering with watch service: {}", dirPath);
 
-        dirPath.register(watchService, new WatchEvent.Kind<?>[]{StandardWatchEventKinds.ENTRY_CREATE, StandardWatchEventKinds.ENTRY_DELETE, StandardWatchEventKinds.ENTRY_MODIFY, StandardWatchEventKinds.OVERFLOW}, SensitivityWatchEventModifier.HIGH);
+        dirPath.register(watchService, new WatchEvent.Kind<?>[]{StandardWatchEventKinds.ENTRY_CREATE, StandardWatchEventKinds.ENTRY_DELETE, StandardWatchEventKinds.ENTRY_MODIFY, StandardWatchEventKinds.OVERFLOW});
         state = State.NEW;
         this.watcherThread = new WatcherThread(watchService, callback);
         this.watcherThread.setDaemon(true);
@@ -182,7 +181,7 @@ public final class FileChangeWatcher {
         @Override
         public void run() {
             try {
-                LOG.info(getName() + " thread started");
+                LOG.info("{} thread started", getName());
                 if (!compareAndSetState(FileChangeWatcher.State.STARTING, FileChangeWatcher.State.RUNNING)) {
                     // stop() called shortly after start(), before
                     // this thread started running.
@@ -202,7 +201,7 @@ public final class FileChangeWatcher {
                 } catch (IOException e) {
                     LOG.warn("Error closing watch service", e);
                 }
-                LOG.info(getName() + " thread finished");
+                LOG.info("{} thread finished", getName());
                 FileChangeWatcher.this.setState(FileChangeWatcher.State.STOPPED);
             }
         }

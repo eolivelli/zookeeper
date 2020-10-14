@@ -18,10 +18,12 @@
 
 package org.apache.zookeeper.server;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -36,6 +38,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.apache.jute.BinaryOutputArchive;
 import org.apache.jute.Record;
+import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.SessionExpiredException;
 import org.apache.zookeeper.KeeperException.SessionMovedException;
@@ -45,16 +48,26 @@ import org.apache.zookeeper.PortAssignment;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooDefs.OpCode;
 import org.apache.zookeeper.data.Id;
+import org.apache.zookeeper.proto.CreateRequest;
+import org.apache.zookeeper.proto.ReconfigRequest;
 import org.apache.zookeeper.proto.RequestHeader;
 import org.apache.zookeeper.proto.SetDataRequest;
 import org.apache.zookeeper.server.ZooKeeperServer.ChangeRecord;
+import org.apache.zookeeper.server.persistence.FileTxnSnapLog;
+import org.apache.zookeeper.server.quorum.Leader;
+import org.apache.zookeeper.server.quorum.LeaderBeanTest;
+import org.apache.zookeeper.server.quorum.LeaderZooKeeperServer;
+import org.apache.zookeeper.server.quorum.QuorumPeer;
+import org.apache.zookeeper.server.quorum.QuorumPeerConfig;
+import org.apache.zookeeper.server.quorum.flexible.QuorumVerifier;
 import org.apache.zookeeper.test.ClientBase;
 import org.apache.zookeeper.txn.ErrorTxn;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 public class PrepRequestProcessorTest extends ClientBase {
 
@@ -68,7 +81,10 @@ public class PrepRequestProcessorTest extends ClientBase {
     private PrepRequestProcessor processor;
     private Request outcome;
 
-    @Before
+    private boolean isReconfigEnabledPreviously;
+    private boolean isStandaloneEnabledPreviously;
+
+    @BeforeEach
     public void setup() throws Exception {
         File tmpDir = ClientBase.createTmpDir();
         ClientBase.setupTestEnv();
@@ -78,11 +94,14 @@ public class PrepRequestProcessorTest extends ClientBase {
 
         servcnxnf = ServerCnxnFactory.createFactory(PORT, -1);
         servcnxnf.startup(zks);
-        assertTrue("waiting for server being up ", ClientBase.waitForServerUp(HOSTPORT, CONNECTION_TIMEOUT));
+        assertTrue(ClientBase.waitForServerUp(HOSTPORT, CONNECTION_TIMEOUT), "waiting for server being up ");
         zks.sessionTracker = new MySessionTracker();
+
+        isReconfigEnabledPreviously = QuorumPeerConfig.isReconfigEnabled();
+        isStandaloneEnabledPreviously = QuorumPeerConfig.isStandaloneEnabled();
     }
 
-    @After
+    @AfterEach
     public void teardown() throws Exception {
         if (servcnxnf != null) {
             servcnxnf.shutdown();
@@ -90,6 +109,10 @@ public class PrepRequestProcessorTest extends ClientBase {
         if (zks != null) {
             zks.shutdown();
         }
+
+        // reset the reconfig option
+        QuorumPeerConfig.setReconfigEnabled(isReconfigEnabledPreviously);
+        QuorumPeerConfig.setStandaloneEnabled(isStandaloneEnabledPreviously);
     }
 
     @Test
@@ -99,8 +122,8 @@ public class PrepRequestProcessorTest extends ClientBase {
         Request foo = new Request(null, 1L, 1, OpCode.create, ByteBuffer.allocate(3), null);
         processor.pRequest(foo);
 
-        assertEquals("Request should have marshalling error", new ErrorTxn(KeeperException.Code.MARSHALLINGERROR.intValue()), outcome.getTxn());
-        assertTrue("request hasn't been processed in chain", pLatch.await(5, TimeUnit.SECONDS));
+        assertEquals(new ErrorTxn(KeeperException.Code.MARSHALLINGERROR.intValue()), outcome.getTxn(), "Request should have marshalling error");
+        assertTrue(pLatch.await(5, TimeUnit.SECONDS), "request hasn't been processed in chain");
     }
 
     private Request createRequest(Record record, int opCode) throws IOException {
@@ -108,13 +131,21 @@ public class PrepRequestProcessorTest extends ClientBase {
     }
 
     private Request createRequest(Record record, int opCode, long sessionId) throws IOException {
+        return createRequest(record, opCode, sessionId, false);
+    }
+
+    private Request createRequest(Record record, int opCode, boolean admin) throws IOException {
+        return createRequest(record, opCode, 1L, admin);
+    }
+
+    private Request createRequest(Record record, int opCode, long sessionId, boolean admin) throws IOException {
         // encoding
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         BinaryOutputArchive boa = BinaryOutputArchive.getArchive(baos);
         record.serialize(boa, "request");
         baos.close();
         // Id
-        List<Id> ids = Arrays.asList(Ids.ANYONE_ID_UNSAFE);
+        List<Id> ids = Arrays.asList(admin ? new Id("super", "super user") : Ids.ANYONE_ID_UNSAFE);
         return new Request(null, sessionId, 0, opCode, ByteBuffer.wrap(baos.toByteArray()), ids);
     }
 
@@ -123,10 +154,10 @@ public class PrepRequestProcessorTest extends ClientBase {
         processor = new PrepRequestProcessor(zks, new MyRequestProcessor());
 
         Record record = new MultiOperationRecord(ops);
-        Request req = createRequest(record, OpCode.multi);
+        Request req = createRequest(record, OpCode.multi, false);
 
         processor.pRequest(req);
-        assertTrue("request hasn't been processed in chain", pLatch.await(5, TimeUnit.SECONDS));
+        assertTrue(pLatch.await(5, TimeUnit.SECONDS), "request hasn't been processed in chain");
     }
 
     /**
@@ -142,18 +173,48 @@ public class PrepRequestProcessorTest extends ClientBase {
         process(Arrays.asList(Op.setData("/foo", new byte[0], -1)));
 
         ChangeRecord cr = zks.outstandingChangesForPath.get("/foo");
-        assertNotNull("Change record wasn't set", cr);
-        assertEquals("Record zxid wasn't set correctly", 1, cr.zxid);
+        assertNotNull(cr, "Change record wasn't set");
+        assertEquals(1, cr.zxid, "Record zxid wasn't set correctly");
 
         process(Arrays.asList(Op.delete("/foo", -1)));
         cr = zks.outstandingChangesForPath.get("/foo");
-        assertEquals("Record zxid wasn't set correctly", 2, cr.zxid);
+        assertEquals(2, cr.zxid, "Record zxid wasn't set correctly");
 
         // It should fail and shouldn't change outstanding record.
         process(Arrays.asList(Op.delete("/foo", -1)));
         cr = zks.outstandingChangesForPath.get("/foo");
         // zxid should still be previous result because record's not changed.
-        assertEquals("Record zxid wasn't set correctly", 2, cr.zxid);
+        assertEquals(2, cr.zxid, "Record zxid wasn't set correctly");
+    }
+
+    @Test
+    public void testReconfigWithAnotherOutstandingChange() throws Exception {
+        QuorumPeerConfig.setReconfigEnabled(true);
+        QuorumPeerConfig.setStandaloneEnabled(false);
+
+        QuorumPeer qp = new QuorumPeer();
+        QuorumVerifier quorumVerifierMock = mock(QuorumVerifier.class);
+        when(quorumVerifierMock.getAllMembers()).thenReturn(LeaderBeanTest.getMockedPeerViews(qp.getId()));
+
+        qp.setQuorumVerifier(quorumVerifierMock, false);
+        FileTxnSnapLog snapLog = new FileTxnSnapLog(tmpDir, tmpDir);
+        LeaderZooKeeperServer lzks = new LeaderZooKeeperServer(snapLog, qp, new ZKDatabase(snapLog));
+        qp.leader = new Leader(qp, lzks);
+        lzks.sessionTracker = new MySessionTracker();
+        ZooKeeperServer.setDigestEnabled(true);
+        processor = new PrepRequestProcessor(lzks, new MyRequestProcessor());
+
+        Record record = new CreateRequest("/foo", "data".getBytes(), Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT.toFlag());
+        pLatch = new CountDownLatch(1);
+        processor.pRequest(createRequest(record, OpCode.create, false));
+        assertTrue(pLatch.await(5, TimeUnit.SECONDS), "request hasn't been processed in chain");
+
+        String newMember = "server.0=localhost:" + PortAssignment.unique()  + ":" + PortAssignment.unique() + ":participant";
+        record = new ReconfigRequest(null, null, newMember, 0);
+        pLatch = new CountDownLatch(1);
+        processor.pRequest(createRequest(record, OpCode.reconfig, true));
+        assertTrue(pLatch.await(5, TimeUnit.SECONDS), "request hasn't been processed in chain");
+        assertEquals(outcome.getHdr().getType(), OpCode.reconfig);   // Verifies that there was no error.
     }
 
     /**
@@ -234,7 +295,7 @@ public class PrepRequestProcessorTest extends ClientBase {
         processor = new PrepRequestProcessor(zks, new MyRequestProcessor());
 
         SetDataRequest record = new SetDataRequest("", new byte[0], -1);
-        Request req = createRequest(record, OpCode.setData);
+        Request req = createRequest(record, OpCode.setData, false);
         processor.pRequest(req);
         pLatch.await();
         assertEquals(outcome.getHdr().getType(), OpCode.error);

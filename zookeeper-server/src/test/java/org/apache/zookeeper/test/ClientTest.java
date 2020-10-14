@@ -18,12 +18,12 @@
 
 package org.apache.zookeeper.test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNotSame;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,7 +32,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.apache.zookeeper.AsyncCallback;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.Code;
@@ -54,7 +53,7 @@ import org.apache.zookeeper.proto.ReplyHeader;
 import org.apache.zookeeper.proto.RequestHeader;
 import org.apache.zookeeper.server.PrepRequestProcessor;
 import org.apache.zookeeper.server.util.OSMXBean;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -127,12 +126,14 @@ public class ClientTest extends ClientBase {
         ZooKeeper zk = null;
         try {
             zk = createClient();
+
             try {
                 zk.create("/acltest", new byte[0], Ids.CREATOR_ALL_ACL, CreateMode.PERSISTENT);
                 fail("Should have received an invalid acl error");
             } catch (InvalidACLException e) {
-                LOG.info("Test successful, invalid acl received : " + e.getMessage());
+                LOG.info("Test successful, invalid acl received : {}", e.getMessage());
             }
+
             try {
                 ArrayList<ACL> testACL = new ArrayList<ACL>();
                 testACL.add(new ACL(Perms.ALL | Perms.ADMIN, Ids.AUTH_IDS));
@@ -140,16 +141,18 @@ public class ClientTest extends ClientBase {
                 zk.create("/acltest", new byte[0], testACL, CreateMode.PERSISTENT);
                 fail("Should have received an invalid acl error");
             } catch (InvalidACLException e) {
-                LOG.info("Test successful, invalid acl received : " + e.getMessage());
+                LOG.info("Test successful, invalid acl received : {}", e.getMessage());
             }
+
             try {
                 ArrayList<ACL> testACL = new ArrayList<ACL>();
                 testACL.add(new ACL(Perms.ALL | Perms.ADMIN, new Id()));
                 zk.create("/nullidtest", new byte[0], testACL, CreateMode.PERSISTENT);
                 fail("Should have received an invalid acl error");
             } catch (InvalidACLException e) {
-                LOG.info("Test successful, invalid acl received : " + e.getMessage());
+                LOG.info("Test successful, invalid acl received : {}", e.getMessage());
             }
+
             zk.addAuthInfo("digest", "ben:passwd".getBytes());
             ArrayList<ACL> testACL = new ArrayList<ACL>();
             testACL.add(new ACL(Perms.ALL, new Id("auth", "")));
@@ -385,11 +388,11 @@ public class ClientTest extends ClientBase {
             zk.delete("/benwashere", 0);
             LOG.info("After delete /benwashere");
             zk.close();
-            //LOG.info("Closed client: " + zk.describeCNXN());
+
             Thread.sleep(2000);
 
             zk = createClient(watcher, hostPort);
-            //LOG.info("Created a new client: " + zk.describeCNXN());
+
             LOG.info("Before delete /");
 
             try {
@@ -425,7 +428,7 @@ public class ClientTest extends ClientBase {
             }
             zk.create("/frog", "hi".getBytes(), Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
             // the first poll is just a session delivery
-            LOG.info("Comment: checking for events length " + watcher.events.size());
+            LOG.info("Comment: checking for events length {}", watcher.events.size());
             WatchedEvent event = watcher.events.poll(10, TimeUnit.SECONDS);
             assertEquals("/frog", event.getPath());
             assertEquals(EventType.NodeCreated, event.getType());
@@ -442,7 +445,7 @@ public class ClientTest extends ClientBase {
             assertEquals(10, children.size());
             for (int i = 0; i < 10; i++) {
                 final String name = children.get(i);
-                assertTrue("starts with -", name.startsWith(i + "-"));
+                assertTrue(name.startsWith(i + "-"), "starts with -");
                 byte[] b;
                 if (withWatcherObj) {
                     b = zk.getData("/pat/ben/" + name, watcher, stat);
@@ -509,12 +512,12 @@ public class ClientTest extends ClientBase {
             zk.create(filepath, new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT_SEQUENTIAL);
             children = zk.getChildren(path, false);
             assertEquals(2, children.size());
-            assertTrue("contains child 1", children.contains(file + "0000000001"));
+            assertTrue(children.contains(file + "0000000001"), "contains child 1");
 
             zk.create(filepath, new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT_SEQUENTIAL);
             children = zk.getChildren(path, false);
             assertEquals(3, children.size());
-            assertTrue("contains child 2", children.contains(file + "0000000002"));
+            assertTrue(children.contains(file + "0000000002"), "contains child 2");
 
             // The pattern is holding so far.  Let's run the counter a bit
             // to be sure it continues to spit out the correct answer
@@ -523,7 +526,7 @@ public class ClientTest extends ClientBase {
             }
 
             children = zk.getChildren(path, false);
-            assertTrue("contains child 104", children.contains(file + "0000000104"));
+            assertTrue(children.contains(file + "0000000104"), "contains child 104");
 
         } finally {
             if (zk != null) {
@@ -679,21 +682,6 @@ public class ClientTest extends ClientBase {
         zk.create("/f/f./f", null, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
     }
 
-    //    private void notestConnections()
-    //        throws IOException, InterruptedException, KeeperException
-    //    {
-    //        ZooKeeper zk;
-    //        for(int i = 0; i < 2000; i++) {
-    //            if (i % 100 == 0) {
-    //                LOG.info("Testing " + i + " connections");
-    //            }
-    //            // We want to make sure socket descriptors are going away
-    //            zk = new ZooKeeper(hostPort, 30000, this);
-    //            zk.getData("/", false, new Stat());
-    //            zk.close();
-    //        }
-    //    }
-
     @Test
     public void testDeleteWithChildren() throws Exception {
         ZooKeeper zk = createClient();
@@ -780,9 +768,9 @@ public class ClientTest extends ClientBase {
 
         if (currentCount > initialFdCount + 10) {
             // consider as error
-            LOG.error(logmsg, Long.valueOf(currentCount), Long.valueOf(initialFdCount));
+            LOG.error(logmsg, currentCount, initialFdCount);
         } else {
-            LOG.info(logmsg, Long.valueOf(currentCount), Long.valueOf(initialFdCount));
+            LOG.info(logmsg, currentCount, initialFdCount);
         }
     }
 
@@ -817,7 +805,7 @@ public class ClientTest extends ClientBase {
         assertEquals(r.getErr(), Code.UNIMPLEMENTED.intValue());
 
         // Sending a nonexisting opcode should cause the server to disconnect
-        assertTrue("failed to disconnect", clientDisconnected.await(5000, TimeUnit.MILLISECONDS));
+        assertTrue(clientDisconnected.await(5000, TimeUnit.MILLISECONDS), "failed to disconnect");
         zk.close();
     }
 
@@ -843,18 +831,15 @@ public class ClientTest extends ClientBase {
             for (int i = 0; i < 20; ++i) {
                 final CountDownLatch latch = new CountDownLatch(1);
                 final AtomicInteger rc = new AtomicInteger(0);
-                zk.setData("/testnode", "".getBytes(), -1, new AsyncCallback.StatCallback() {
-                    @Override
-                    public void processResult(int retcode, String path, Object ctx, Stat stat) {
-                        rc.set(retcode);
-                        latch.countDown();
-                    }
+                zk.setData("/testnode", "".getBytes(), -1, (retcode, path, ctx, stat) -> {
+                    rc.set(retcode);
+                    latch.countDown();
                 }, null);
-                assertTrue("setData should complete within 5s", latch.await(zk.getSessionTimeout(), TimeUnit.MILLISECONDS));
-                assertEquals("setData should have succeeded", Code.OK.intValue(), rc.get());
+                assertTrue(latch.await(zk.getSessionTimeout(), TimeUnit.MILLISECONDS), "setData should complete within 5s");
+                assertEquals(Code.OK.intValue(), rc.get(), "setData should have succeeded");
             }
             zk.delete("/testnode", -1);
-            assertTrue("xid should be positive", zk.checkXid() > 0);
+            assertTrue(zk.checkXid() > 0, "xid should be positive");
         } finally {
             if (zk != null) {
                 zk.close();

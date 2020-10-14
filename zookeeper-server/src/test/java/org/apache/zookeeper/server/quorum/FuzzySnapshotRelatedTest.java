@@ -18,35 +18,42 @@
 
 package org.apache.zookeeper.server.quorum;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.security.sasl.SaslException;
 import org.apache.jute.OutputArchive;
+import org.apache.zookeeper.AsyncCallback.MultiCallback;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException.NoNodeException;
 import org.apache.zookeeper.KeeperException.NodeExistsException;
 import org.apache.zookeeper.Op;
+import org.apache.zookeeper.OpResult;
 import org.apache.zookeeper.PortAssignment;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.ZooKeeper.States;
 import org.apache.zookeeper.data.ACL;
 import org.apache.zookeeper.data.Stat;
+import org.apache.zookeeper.metrics.MetricsUtils;
 import org.apache.zookeeper.server.DataNode;
 import org.apache.zookeeper.server.DataTree;
+import org.apache.zookeeper.server.ServerMetrics;
 import org.apache.zookeeper.server.ZKDatabase;
 import org.apache.zookeeper.server.ZooKeeperServer;
 import org.apache.zookeeper.server.persistence.FileTxnSnapLog;
 import org.apache.zookeeper.test.ClientBase;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,8 +70,10 @@ public class FuzzySnapshotRelatedTest extends QuorumPeerTestBase {
     int leaderId;
     int followerA;
 
-    @Before
+    @BeforeEach
     public void setup() throws Exception {
+        ZooKeeperServer.setDigestEnabled(true);
+
         LOG.info("Start up a 3 server quorum");
         final int ENSEMBLE_SERVERS = 3;
         clientPorts = new int[ENSEMBLE_SERVERS];
@@ -106,8 +115,10 @@ public class FuzzySnapshotRelatedTest extends QuorumPeerTestBase {
         }
     }
 
-    @After
+    @AfterEach
     public void tearDown() throws Exception {
+        ZooKeeperServer.setDigestEnabled(false);
+
         if (mt != null) {
             for (MainThread t : mt) {
                 t.shutdown();
@@ -191,7 +202,7 @@ public class FuzzySnapshotRelatedTest extends QuorumPeerTestBase {
         mt[followerA].start();
         QuorumPeerMainTest.waitForOne(zk[followerA], States.CONNECTED);
 
-        LOG.info("Check and make sure the pzxid of the parent is the same " + "on leader and follower A");
+        LOG.info("Check and make sure the pzxid of the parent is the same on leader and follower A");
         compareStat(parent, leaderId, followerA);
     }
 
@@ -229,8 +240,84 @@ public class FuzzySnapshotRelatedTest extends QuorumPeerTestBase {
 
         QuorumPeerMainTest.waitForOne(zk[followerA], States.CONNECTED);
 
-        LOG.info("Check and make sure the pzxid of the parent is the same " + "on leader and follower A");
+        LOG.info("Check and make sure the pzxid of the parent is the same on leader and follower A");
         compareStat(parent, leaderId, followerA);
+    }
+
+    @Test
+    public void testMultiOpDigestConsistentDuringSnapshot() throws Exception {
+        ServerMetrics.getMetrics().resetAll();
+
+        LOG.info("Create some txns");
+        final String path = "/testMultiOpDigestConsistentDuringSnapshot";
+        createEmptyNode(zk[followerA], path, CreateMode.PERSISTENT);
+
+        CustomDataTree dt =
+                (CustomDataTree) mt[followerA].main.quorumPeer.getZkDb().getDataTree();
+        final CountDownLatch setDataLatch = new CountDownLatch(1);
+        final CountDownLatch continueSetDataLatch = new CountDownLatch(1);
+        final ZooKeeper followerZk = zk[followerA];
+        dt.setDigestSerializeListener(new DigestSerializeListener() {
+            @Override
+            public void process() {
+                LOG.info("Trigger a multi op in async");
+                followerZk.multi(Arrays.asList(
+                        Op.create("/multi0", "/multi0".getBytes(),
+                                Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT),
+                        Op.setData(path, "new data".getBytes(), -1)
+                ), new MultiCallback() {
+                    @Override
+                    public void processResult(int rc, String path, Object ctx,
+                            List<OpResult> opResults) {}
+                }, null);
+
+                LOG.info("Wait for the signal to continue");
+                try {
+                    setDataLatch.await(3, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    LOG.error("Error while waiting for set data txn, {}", e);
+                }
+            }
+
+            @Override
+            public void finished() {
+                LOG.info("Finished writing digest out, continue");
+                continueSetDataLatch.countDown();
+            }
+        });
+
+        dt.setDataListener(new SetDataTxnListener() {
+            @Override
+            public void process() {
+                setDataLatch.countDown();
+                try {
+                    continueSetDataLatch.await(3, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    LOG.error("Error while waiting for continue signal, {}", e);
+                }
+            }
+        });
+
+        LOG.info("Trigger a snapshot");
+        ZooKeeperServer zkServer = mt[followerA].main.quorumPeer.getActiveServer();
+        zkServer.takeSnapshot(true);
+        checkNoMismatchReported();
+
+        LOG.info("Restart the server to load the snapshot again");
+        mt[followerA].shutdown();
+        QuorumPeerMainTest.waitForOne(zk[followerA], States.CONNECTING);
+        mt[followerA].start();
+        QuorumPeerMainTest.waitForOne(zk[followerA], States.CONNECTED);
+
+        LOG.info("Make sure there is nothing caught in the digest mismatch");
+        checkNoMismatchReported();
+
+    }
+
+    private void checkNoMismatchReported() {
+        long mismatch = (long) MetricsUtils.currentServerMetrics().get("digest_mismatches_count");
+
+        assertFalse(mismatch > 0, "The mismatch count should be zero but is: " + mismatch);
     }
 
     private void addSerializeListener(int sid, String parent, String child) {
@@ -323,10 +410,22 @@ public class FuzzySnapshotRelatedTest extends QuorumPeerTestBase {
 
     }
 
+    interface DigestSerializeListener {
+        void process();
+
+        void finished();
+    }
+
+    interface SetDataTxnListener {
+        void process();
+    }
+
     static class CustomDataTree extends DataTree {
 
         Map<String, NodeCreateListener> nodeCreateListeners = new HashMap<String, NodeCreateListener>();
         Map<String, NodeSerializeListener> listeners = new HashMap<String, NodeSerializeListener>();
+        DigestSerializeListener digestListener;
+        SetDataTxnListener setListener;
 
         @Override
         public void serializeNodeData(OutputArchive oa, String path, DataNode node) throws IOException {
@@ -362,6 +461,34 @@ public class FuzzySnapshotRelatedTest extends QuorumPeerTestBase {
             nodeCreateListeners.put(path, listener);
         }
 
+        public void setDigestSerializeListener(DigestSerializeListener listener) {
+            this.digestListener = listener;
+        }
+
+        public void setDataListener(SetDataTxnListener listener) {
+            this.setListener = listener;
+        }
+
+        @Override
+        public boolean serializeZxidDigest(OutputArchive oa) throws IOException {
+            if (digestListener != null) {
+                digestListener.process();
+            }
+            boolean result = super.serializeZxidDigest(oa);
+            if (digestListener != null) {
+                digestListener.finished();
+            }
+            return result;
+        }
+
+        public Stat setData(String path, byte data[], int version, long zxid,
+                long time) throws NoNodeException {
+            if (setListener != null) {
+                setListener.process();
+            }
+
+            return super.setData(path, data, version, zxid, time);
+        }
     }
 
     interface NodeSerializeListener {

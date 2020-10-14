@@ -18,7 +18,7 @@
 
 package org.apache.zookeeper.test;
 
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -28,7 +28,7 @@ import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class SaslAuthFailTest extends ClientBase {
 
@@ -82,7 +82,7 @@ public class SaslAuthFailTest extends ClientBase {
             fail("Should have gotten exception.");
         } catch (Exception e) {
             // ok, exception as expected.
-            LOG.info("Got exception as expected: " + e);
+            LOG.debug("Got exception as expected", e);
         }
     }
 

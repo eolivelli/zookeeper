@@ -599,12 +599,13 @@ void acl_completion_dispatch(int rc, struct ACL_vector *acl, struct Stat *stat, 
 /* ZOOKEEPER API IMPLEMENTATION */
 /* -------------------------------------------------------------------------- */
 
-static PyObject *pyzookeeper_init(PyObject *self, PyObject *args)
-{
+
+static PyObject *pyzookeeper_init_common(PyObject *self, PyObject *args, int ssl) {
   const char *host;
+  const char *cert_str;
   PyObject *watcherfn = Py_None;
+  zhandle_t *zh = NULL;
   int recv_timeout = 10000;
-  //  int clientid = -1;
   clientid_t cid;
   cid.client_id = -1;
   const char *passwd;
@@ -621,9 +622,14 @@ static PyObject *pyzookeeper_init(PyObject *self, PyObject *args)
     return NULL;
   }
 
-  if (!PyArg_ParseTuple(args, "s|Oi(Ls)", &host, &watcherfn, &recv_timeout, &cid.client_id, &passwd)) 
-    return NULL;
-  
+  if (ssl) {
+    if (!PyArg_ParseTuple(args, "ss|Oi(Ls)", &host, &cert_str, &watcherfn, &recv_timeout, &cid.client_id, &passwd))
+      return NULL;
+  } else {
+    if (!PyArg_ParseTuple(args, "s|Oi(Ls)", &host, &watcherfn, &recv_timeout, &cid.client_id, &passwd))
+        return NULL;
+  }
+
   if (cid.client_id != -1) {
     strncpy(cid.passwd, passwd, 16*sizeof(char));
   }
@@ -635,20 +641,42 @@ static PyObject *pyzookeeper_init(PyObject *self, PyObject *args)
     }
   }
   watchers[handle] = pyw;
-  zhandle_t *zh = zookeeper_init( host, watcherfn != Py_None ? watcher_dispatch : NULL, 
-                                  recv_timeout, cid.client_id == -1 ? 0 : &cid, 
-                                  pyw,
-                                  0 ); 
+
+  if (ssl) {
+#ifdef HAVE_OPENSSL_H
+    zh = zookeeper_init_ssl( host, cert_str, watcherfn != Py_None ? watcher_dispatch : NULL,
+                             recv_timeout, cid.client_id == -1 ? 0 : &cid, pyw, 0 );
+#else
+    fprintf(stderr, "SSL support not compiled in (called with ssl=%d).\n", ssl);
+    abort();
+#endif
+  } else {
+    zh = zookeeper_init( host, watcherfn != Py_None ? watcher_dispatch : NULL,
+                         recv_timeout, cid.client_id == -1 ? 0 : &cid, pyw, 0 );
+  }
 
   if (zh == NULL)
     {
-      PyErr_SetString( ZooKeeperException, "Could not internally obtain zookeeper handle" );
+      PyErr_Format( ZooKeeperException, "Could not internally obtain%s zookeeper handle", ssl ? " SSL" : "" );
       return NULL;
     }
 
   zhandles[handle] = zh;
   return Py_BuildValue( "i", handle);
 }
+
+static PyObject *pyzookeeper_init(PyObject *self, PyObject *args)
+{
+  return pyzookeeper_init_common(self, args, /*ssl*/0);
+}
+
+
+#ifdef HAVE_OPENSSL_H
+static PyObject *pyzookeeper_init_ssl(PyObject *self, PyObject *args)
+{
+  return pyzookeeper_init_common(self, args, /*ssl*/1);
+}
+#endif
 
 
 /* -------------------------------------------------------------------------- */
@@ -1497,6 +1525,9 @@ PyObject *pyzoo_deterministic_conn_order(PyObject *self, PyObject *args)
 
 static PyMethodDef ZooKeeperMethods[] = {
   {"init", pyzookeeper_init, METH_VARARGS, pyzk_init_doc },
+#ifdef HAVE_OPENSSL_H
+  {"init_ssl", pyzookeeper_init_ssl, METH_VARARGS, pyzk_init_ssl_doc },
+#endif
   {"create",pyzoo_create, METH_VARARGS, pyzk_create_doc },
   {"delete",pyzoo_delete, METH_VARARGS, pyzk_delete_doc },
   {"get_children", pyzoo_get_children, METH_VARARGS, pyzk_get_children_doc },
@@ -1567,8 +1598,14 @@ PyMODINIT_FUNC initzookeeper(void) {
 #else
   PyObject *module = Py_InitModule("zookeeper", ZooKeeperMethods);
 #endif
+
   if (init_zhandles(32) == 0) {
-    return; // TODO: Is there any way to raise an exception here?
+#if PY_MAJOR_VERSION >= 3
+    Py_DECREF(module);
+    return PyErr_NoMemory();
+#else
+    return;
+#endif
   }
 
   ZooKeeperException = PyErr_NewException("zookeeper.ZooKeeperException",
@@ -1578,11 +1615,7 @@ PyMODINIT_FUNC initzookeeper(void) {
   PyModule_AddObject(module, "ZooKeeperException", ZooKeeperException);
   Py_INCREF(ZooKeeperException);
 
-  int size = 10;
-  char version_str[size];
-  snprintf(version_str, size, "%i.%i.%i", ZOO_MAJOR_VERSION, ZOO_MINOR_VERSION, ZOO_PATCH_VERSION);
-
-  PyModule_AddStringConstant(module, "__version__", version_str);
+  PyModule_AddStringConstant(module, "__version__", ZOO_VERSION);
 
   ADD_INTCONSTANT(PERM_READ);
   ADD_INTCONSTANT(PERM_WRITE);

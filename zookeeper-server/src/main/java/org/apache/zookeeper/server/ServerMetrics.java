@@ -84,6 +84,9 @@ public final class ServerMetrics {
         CONNECTION_TOKEN_DEFICIT = metricsContext.getSummary("connection_token_deficit", DetailLevel.BASIC);
         CONNECTION_REJECTED = metricsContext.getCounter("connection_rejected");
 
+        INFLIGHT_SNAP_COUNT = metricsContext.getSummary("inflight_snap_count", DetailLevel.BASIC);
+        INFLIGHT_DIFF_COUNT = metricsContext.getSummary("inflight_diff_count", DetailLevel.BASIC);
+
         WRITE_PER_NAMESPACE = metricsContext.getSummarySet("write_per_namespace", DetailLevel.BASIC);
         READ_PER_NAMESPACE = metricsContext.getSummarySet("read_per_namespace", DetailLevel.BASIC);
 
@@ -95,7 +98,6 @@ public final class ServerMetrics {
         NODE_CHANGED_WATCHER = metricsContext.getSummary("node_changed_watch_count", DetailLevel.BASIC);
         NODE_CHILDREN_WATCHER = metricsContext.getSummary("node_children_watch_count", DetailLevel.BASIC);
 
-
         /*
          * Number of dead watchers in DeadWatcherListener
          */
@@ -106,6 +108,8 @@ public final class ServerMetrics {
 
         RESPONSE_PACKET_CACHE_HITS = metricsContext.getCounter("response_packet_cache_hits");
         RESPONSE_PACKET_CACHE_MISSING = metricsContext.getCounter("response_packet_cache_misses");
+        RESPONSE_PACKET_GET_CHILDREN_CACHE_HITS = metricsContext.getCounter("response_packet_get_children_cache_hits");
+        RESPONSE_PACKET_GET_CHILDREN_CACHE_MISSING = metricsContext.getCounter("response_packet_get_children_cache_misses");
 
         ENSEMBLE_AUTH_SUCCESS = metricsContext.getCounter("ensemble_auth_success");
 
@@ -119,6 +123,7 @@ public final class ServerMetrics {
         OUTSTANDING_CHANGES_QUEUED = metricsContext.getCounter("outstanding_changes_queued");
         OUTSTANDING_CHANGES_REMOVED = metricsContext.getCounter("outstanding_changes_removed");
         PREP_PROCESS_TIME = metricsContext.getSummary("prep_process_time", DetailLevel.BASIC);
+        PROPOSAL_PROCESS_TIME = metricsContext.getSummary("proposal_process_time", DetailLevel.BASIC);
         CLOSE_SESSION_PREP_TIME = metricsContext.getSummary("close_session_prep_time", DetailLevel.ADVANCED);
 
         REVALIDATE_COUNT = metricsContext.getCounter("revalidate_count");
@@ -128,6 +133,9 @@ public final class ServerMetrics {
         // Expiry queue stats
         SESSIONLESS_CONNECTIONS_EXPIRED = metricsContext.getCounter("sessionless_connections_expired");
         STALE_SESSIONS_EXPIRED = metricsContext.getCounter("stale_sessions_expired");
+
+        UNAVAILABLE_TIME = metricsContext.getSummary("unavailable_time", DetailLevel.BASIC);
+        LEADER_UNAVAILABLE_TIME = metricsContext.getSummary("leader_unavailable_time", DetailLevel.BASIC);
 
         /*
          * Number of requests that are in the session queue.
@@ -152,6 +160,8 @@ public final class ServerMetrics {
         COMMITS_QUEUED = metricsContext.getCounter("request_commit_queued");
         READS_ISSUED_IN_COMMIT_PROC = metricsContext.getSummary("read_commit_proc_issued", DetailLevel.BASIC);
         WRITES_ISSUED_IN_COMMIT_PROC = metricsContext.getSummary("write_commit_proc_issued", DetailLevel.BASIC);
+
+        THROTTLED_OPS = metricsContext.getCounter("throttled_ops");
 
         /**
          * Time spent by a read request in the commit processor.
@@ -222,11 +232,33 @@ public final class ServerMetrics {
         STALE_REQUESTS = metricsContext.getCounter("stale_requests");
         STALE_REQUESTS_DROPPED = metricsContext.getCounter("stale_requests_dropped");
         STALE_REPLIES = metricsContext.getCounter("stale_replies");
+        REQUEST_THROTTLE_QUEUE_TIME = metricsContext.getSummary("request_throttle_queue_time_ms", DetailLevel.ADVANCED);
         REQUEST_THROTTLE_WAIT_COUNT = metricsContext.getCounter("request_throttle_wait_count");
+        LARGE_REQUESTS_REJECTED = metricsContext.getCounter("large_requests_rejected");
 
         NETTY_QUEUED_BUFFER = metricsContext.getSummary("netty_queued_buffer_capacity", DetailLevel.BASIC);
 
         DIGEST_MISMATCHES_COUNT = metricsContext.getCounter("digest_mismatches_count");
+
+        LEARNER_REQUEST_PROCESSOR_QUEUE_SIZE = metricsContext.getSummary("learner_request_processor_queue_size", DetailLevel.BASIC);
+
+        UNSUCCESSFUL_HANDSHAKE = metricsContext.getCounter("unsuccessful_handshake");
+        INSECURE_ADMIN = metricsContext.getCounter("insecure_admin_count");
+        TLS_HANDSHAKE_EXCEEDED = metricsContext.getCounter("tls_handshake_exceeded");
+
+        CNXN_CLOSED_WITHOUT_ZK_SERVER_RUNNING = metricsContext.getCounter("cnxn_closed_without_zk_server_running");
+
+        SKIP_LEARNER_REQUEST_TO_NEXT_PROCESSOR_COUNT = metricsContext.getCounter("skip_learner_request_to_next_processor_count");
+
+        SOCKET_CLOSING_TIME = metricsContext.getSummary("socket_closing_time", DetailLevel.BASIC);
+
+        REQUESTS_NOT_FORWARDED_TO_COMMIT_PROCESSOR = metricsContext.getCounter(
+                "requests_not_forwarded_to_commit_processor");
+
+        RESPONSE_BYTES = metricsContext.getCounter("response_bytes");
+        WATCH_BYTES = metricsContext.getCounter("watch_bytes");
+
+        JVM_PAUSE_TIME = metricsContext.getSummary("jvm_pause_time_ms", DetailLevel.ADVANCED);
     }
 
     /**
@@ -281,9 +313,15 @@ public final class ServerMetrics {
     public final Counter SESSIONLESS_CONNECTIONS_EXPIRED;
     public final Counter STALE_SESSIONS_EXPIRED;
 
+    public final Summary UNAVAILABLE_TIME;
+    public final Summary LEADER_UNAVAILABLE_TIME;
+
     // Connection throttling related
     public final Summary CONNECTION_TOKEN_DEFICIT;
     public final Counter CONNECTION_REJECTED;
+
+    public final Summary INFLIGHT_SNAP_COUNT;
+    public final Summary INFLIGHT_DIFF_COUNT;
 
     public final Counter UNRECOVERABLE_ERROR_COUNT;
     public final SummarySet WRITE_PER_NAMESPACE;
@@ -296,6 +334,7 @@ public final class ServerMetrics {
     public final Counter OUTSTANDING_CHANGES_QUEUED;
     public final Counter OUTSTANDING_CHANGES_REMOVED;
     public final Summary PREP_PROCESS_TIME;
+    public final Summary PROPOSAL_PROCESS_TIME;
     public final Summary CLOSE_SESSION_PREP_TIME;
 
     public final Summary PROPOSAL_LATENCY;
@@ -337,8 +376,14 @@ public final class ServerMetrics {
     public final Counter DEAD_WATCHERS_QUEUED;
     public final Counter DEAD_WATCHERS_CLEARED;
     public final Summary DEAD_WATCHERS_CLEANER_LATENCY;
+
+    /*
+     * Response cache hit and miss metrics.
+     */
     public final Counter RESPONSE_PACKET_CACHE_HITS;
     public final Counter RESPONSE_PACKET_CACHE_MISSING;
+    public final Counter RESPONSE_PACKET_GET_CHILDREN_CACHE_HITS;
+    public final Counter RESPONSE_PACKET_GET_CHILDREN_CACHE_MISSING;
 
     /**
      * Learner handler quorum packet metrics.
@@ -369,6 +414,9 @@ public final class ServerMetrics {
     public final Counter COMMITS_QUEUED;
     public final Summary READS_ISSUED_IN_COMMIT_PROC;
     public final Summary WRITES_ISSUED_IN_COMMIT_PROC;
+
+    // Request op throttling related
+    public final Counter THROTTLED_OPS;
 
     /**
      * Time spent by a read request in the commit processor.
@@ -424,13 +472,42 @@ public final class ServerMetrics {
     public final Counter STALE_REQUESTS;
     public final Counter STALE_REQUESTS_DROPPED;
     public final Counter STALE_REPLIES;
+    public final Summary REQUEST_THROTTLE_QUEUE_TIME;
     public final Counter REQUEST_THROTTLE_WAIT_COUNT;
+    public final Counter LARGE_REQUESTS_REJECTED;
 
     public final Summary NETTY_QUEUED_BUFFER;
 
     // Total number of digest mismatches that are observed when applying
     // txns to data tree.
     public final Counter DIGEST_MISMATCHES_COUNT;
+
+    public final Summary LEARNER_REQUEST_PROCESSOR_QUEUE_SIZE;
+
+    public final Counter UNSUCCESSFUL_HANDSHAKE;
+
+    /*
+     * Number of insecure connections to admin port
+     */
+    public final Counter INSECURE_ADMIN;
+
+    public final Counter TLS_HANDSHAKE_EXCEEDED;
+
+    public final Counter CNXN_CLOSED_WITHOUT_ZK_SERVER_RUNNING;
+
+    public final Counter SKIP_LEARNER_REQUEST_TO_NEXT_PROCESSOR_COUNT;
+
+    public final Summary SOCKET_CLOSING_TIME;
+
+    public final Counter REQUESTS_NOT_FORWARDED_TO_COMMIT_PROCESSOR;
+
+    /**
+     *  Number of response/watch bytes written to clients.
+     */
+    public final Counter RESPONSE_BYTES;
+    public final Counter WATCH_BYTES;
+
+    public final Summary JVM_PAUSE_TIME;
 
     private final MetricsProvider metricsProvider;
 

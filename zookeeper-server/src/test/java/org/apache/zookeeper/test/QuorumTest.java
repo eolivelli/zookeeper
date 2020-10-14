@@ -18,17 +18,17 @@
 
 package org.apache.zookeeper.test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.concurrent.TimeoutException;
-import org.apache.zookeeper.AsyncCallback;
 import org.apache.zookeeper.CreateMode;
+import org.apache.zookeeper.DummyWatcher;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Op;
 import org.apache.zookeeper.WatchedEvent;
@@ -38,14 +38,13 @@ import org.apache.zookeeper.ZKTestCase;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
-import org.apache.zookeeper.data.Stat;
 import org.apache.zookeeper.server.quorum.Leader;
 import org.apache.zookeeper.server.quorum.LearnerHandler;
 import org.apache.zookeeper.test.ClientBase.CountdownWatcher;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,14 +57,14 @@ public class QuorumTest extends ZKTestCase {
     private final ClientTest ct = new ClientTest();
     private QuorumUtil qu;
 
-    @Before
+    @BeforeEach
     public void setUp() throws Exception {
         qb.setUp();
         ct.hostPort = qb.hostPort;
         ct.setUpAll();
     }
 
-    @After
+    @AfterEach
     public void tearDown() throws Exception {
         ct.tearDownAll();
         qb.tearDown();
@@ -129,10 +128,10 @@ public class QuorumTest extends ZKTestCase {
     volatile int errors = 0;
     @Test
     public void testLeaderShutdown() throws IOException, InterruptedException, KeeperException {
-        ZooKeeper zk = new DisconnectableZooKeeper(qb.hostPort, ClientBase.CONNECTION_TIMEOUT, new Watcher() {
-            public void process(WatchedEvent event) {
-            }
-        });
+        ZooKeeper zk = new DisconnectableZooKeeper(
+            qb.hostPort,
+            ClientBase.CONNECTION_TIMEOUT,
+            DummyWatcher.INSTANCE);
         zk.create("/blah", new byte[0], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
         zk.create("/blah/blah", new byte[0], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
         Leader leader = qb.s1.leader;
@@ -150,12 +149,10 @@ public class QuorumTest extends ZKTestCase {
         }
         assertNotNull(leader);
         for (int i = 0; i < 5000; i++) {
-            zk.setData("/blah/blah", new byte[0], -1, new AsyncCallback.StatCallback() {
-                public void processResult(int rc, String path, Object ctx, Stat stat) {
-                    counter++;
-                    if (rc != 0) {
-                        errors++;
-                    }
+            zk.setData("/blah/blah", new byte[0], -1, (rc, path, ctx, stat) -> {
+                counter++;
+                if (rc != 0) {
+                    errors++;
                 }
             }, null);
         }
@@ -163,12 +160,10 @@ public class QuorumTest extends ZKTestCase {
             f.getSocket().shutdownInput();
         }
         for (int i = 0; i < 5000; i++) {
-            zk.setData("/blah/blah", new byte[0], -1, new AsyncCallback.StatCallback() {
-                public void processResult(int rc, String path, Object ctx, Stat stat) {
-                    counter++;
-                    if (rc != 0) {
-                        errors++;
-                    }
+            zk.setData("/blah/blah", new byte[0], -1, (rc, path, ctx, stat) -> {
+                counter++;
+                if (rc != 0) {
+                    errors++;
                 }
             }, null);
         }
@@ -197,29 +192,28 @@ public class QuorumTest extends ZKTestCase {
     @Test
     public void testSessionMoved() throws Exception {
         String[] hostPorts = qb.hostPort.split(",");
-        DisconnectableZooKeeper zk = new DisconnectableZooKeeper(hostPorts[0], ClientBase.CONNECTION_TIMEOUT, new Watcher() {
-            public void process(WatchedEvent event) {
-            }
-        });
+        DisconnectableZooKeeper zk = new DisconnectableZooKeeper(
+            hostPorts[0],
+            ClientBase.CONNECTION_TIMEOUT,
+            DummyWatcher.INSTANCE);
         zk.create("/sessionMoveTest", new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
         // we want to loop through the list twice
         for (int i = 0; i < hostPorts.length * 2; i++) {
             zk.dontReconnect();
             // This should stomp the zk handle
-            DisconnectableZooKeeper zknew = new DisconnectableZooKeeper(hostPorts[(i + 1)
-                                                                                          % hostPorts.length], ClientBase.CONNECTION_TIMEOUT, new Watcher() {
-                public void process(WatchedEvent event) {
-                }
-            }, zk.getSessionId(), zk.getSessionPasswd());
+            DisconnectableZooKeeper zknew = new DisconnectableZooKeeper(
+                hostPorts[(i + 1) % hostPorts.length],
+                ClientBase.CONNECTION_TIMEOUT,
+                DummyWatcher.INSTANCE,
+                zk.getSessionId(),
+                zk.getSessionPasswd());
             zknew.setData("/", new byte[1], -1);
             final int[] result = new int[1];
             result[0] = Integer.MAX_VALUE;
-            zknew.sync("/", new AsyncCallback.VoidCallback() {
-                public void processResult(int rc, String path, Object ctx) {
-                    synchronized (result) {
-                        result[0] = rc;
-                        result.notify();
-                    }
+            zknew.sync("/", (rc, path, ctx) -> {
+                synchronized (result) {
+                    result[0] = rc;
+                    result.notify();
                 }
             }, null);
             synchronized (result) {
@@ -227,7 +221,7 @@ public class QuorumTest extends ZKTestCase {
                     result.wait(5000);
                 }
             }
-            LOG.info(hostPorts[(i + 1) % hostPorts.length] + " Sync returned " + result[0]);
+            LOG.info("{} Sync returned {}", hostPorts[(i + 1) % hostPorts.length], result[0]);
             assertTrue(result[0] == KeeperException.Code.OK.intValue());
             try {
                 zk.setData("/", new byte[1], -1);
@@ -261,17 +255,20 @@ public class QuorumTest extends ZKTestCase {
     @Test
     public void testSessionMovedWithMultiOp() throws Exception {
         String[] hostPorts = qb.hostPort.split(",");
-        DisconnectableZooKeeper zk = new DisconnectableZooKeeper(hostPorts[0], ClientBase.CONNECTION_TIMEOUT, new Watcher() {
-            public void process(WatchedEvent event) {
-            }
-        });
+        DisconnectableZooKeeper zk = new DisconnectableZooKeeper(
+            hostPorts[0],
+            ClientBase.CONNECTION_TIMEOUT,
+            DummyWatcher.INSTANCE);
         zk.multi(Arrays.asList(Op.create("/testSessionMovedWithMultiOp", new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)));
 
         // session moved to the next server
-        ZooKeeper zknew = new ZooKeeper(hostPorts[1], ClientBase.CONNECTION_TIMEOUT, new Watcher() {
-            public void process(WatchedEvent event) {
-            }
-        }, zk.getSessionId(), zk.getSessionPasswd());
+        ZooKeeper zknew = new ZooKeeper(
+            hostPorts[1],
+            ClientBase.CONNECTION_TIMEOUT,
+            DummyWatcher.INSTANCE,
+            zk.getSessionId(),
+            zk.getSessionPasswd());
+
         zknew.multi(Arrays.asList(Op.create("/testSessionMovedWithMultiOp-1", new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)));
 
         // try to issue the multi op again from the old connection
@@ -292,7 +289,7 @@ public class QuorumTest extends ZKTestCase {
      * make sure we cannot do any changes.
      */
     @Test
-    @Ignore
+    @Disabled
     public void testSessionMove() throws Exception {
         String[] hps = qb.hostPort.split(",");
         DiscoWatcher oldWatcher = new DiscoWatcher();

@@ -39,16 +39,17 @@ import java.util.zip.Adler32;
 import java.util.zip.Checksum;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
-import org.apache.commons.cli.PosixParser;
 import org.apache.jute.BinaryInputArchive;
 import org.apache.jute.BinaryOutputArchive;
 import org.apache.jute.Record;
 import org.apache.zookeeper.server.ExitCode;
-import org.apache.zookeeper.server.TraceFormatter;
+import org.apache.zookeeper.server.Request;
+import org.apache.zookeeper.server.TxnLogEntry;
 import org.apache.zookeeper.server.util.LogChopper;
 import org.apache.zookeeper.server.util.SerializeUtils;
 import org.apache.zookeeper.txn.CreateContainerTxn;
@@ -58,6 +59,7 @@ import org.apache.zookeeper.txn.MultiTxn;
 import org.apache.zookeeper.txn.SetDataTxn;
 import org.apache.zookeeper.txn.Txn;
 import org.apache.zookeeper.txn.TxnHeader;
+import org.apache.zookeeper.util.ServiceUtils;
 
 public class TxnLogToolkit implements Closeable {
 
@@ -126,7 +128,7 @@ public class TxnLogToolkit implements Closeable {
             printHelpAndExit(e.getExitCode(), e.getOptions());
         } catch (TxnLogToolkitException e) {
             System.err.println(e.getMessage());
-            System.exit(e.getExitCode());
+            ServiceUtils.requestSystemExit(e.getExitCode());
         }
     }
 
@@ -282,8 +284,9 @@ public class TxnLogToolkit implements Closeable {
     }
 
     private void printTxn(byte[] bytes, String prefix) throws IOException {
-        TxnHeader hdr = new TxnHeader();
-        Record txn = SerializeUtils.deserializeTxn(bytes, hdr);
+        TxnLogEntry logEntry = SerializeUtils.deserializeTxn(bytes);
+        TxnHeader hdr = logEntry.getHeader();
+        Record txn = logEntry.getTxn();
         String txnStr = getFormattedTxnStr(txn);
         String txns = String.format(
             "%s session 0x%s cxid 0x%s zxid 0x%s %s %s",
@@ -291,7 +294,7 @@ public class TxnLogToolkit implements Closeable {
             Long.toHexString(hdr.getClientId()),
             Long.toHexString(hdr.getCxid()),
             Long.toHexString(hdr.getZxid()),
-            TraceFormatter.op2String(hdr.getType()),
+                Request.op2String(hdr.getType()),
             txnStr);
         if (prefix != null && !"".equals(prefix.trim())) {
             System.out.print(prefix + " - ");
@@ -337,9 +340,9 @@ public class TxnLogToolkit implements Closeable {
             for (int i = 0; i < txnList.size(); i++) {
                 Txn t = txnList.get(i);
                 if (i == 0) {
-                    txnData.append(TraceFormatter.op2String(t.getType()) + ":" + checkNullToEmpty(t.getData()));
+                    txnData.append(Request.op2String(t.getType()) + ":" + checkNullToEmpty(t.getData()));
                 } else {
-                    txnData.append(";" + TraceFormatter.op2String(t.getType()) + ":" + checkNullToEmpty(t.getData()));
+                    txnData.append(";" + Request.op2String(t.getType()) + ":" + checkNullToEmpty(t.getData()));
                 }
             }
         } else {
@@ -380,7 +383,7 @@ public class TxnLogToolkit implements Closeable {
     }
 
     private static TxnLogToolkit parseCommandLine(String[] args) throws TxnLogToolkitException, FileNotFoundException {
-        CommandLineParser parser = new PosixParser();
+        CommandLineParser parser = new DefaultParser();
         Options options = new Options();
 
         Option helpOpt = new Option("h", "help", false, "Print help message");
@@ -424,7 +427,7 @@ public class TxnLogToolkit implements Closeable {
     private static void printHelpAndExit(int exitCode, Options options) {
         HelpFormatter help = new HelpFormatter();
         help.printHelp(120, "TxnLogToolkit [-dhrvc] <txn_log_file_name> (-z <zxid>)", "", options, "");
-        System.exit(exitCode);
+        ServiceUtils.requestSystemExit(exitCode);
     }
 
     private void printStat() {

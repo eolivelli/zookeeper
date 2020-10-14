@@ -21,7 +21,8 @@ package org.apache.zookeeper.test;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,6 +30,7 @@ public class ChrootClientTest extends ClientTest {
 
     private static final Logger LOG = LoggerFactory.getLogger(ChrootClientTest.class);
 
+    @BeforeEach
     @Override
     public void setUp() throws Exception {
         String hp = hostPort;
@@ -37,7 +39,7 @@ public class ChrootClientTest extends ClientTest {
         System.out.println(hostPort);
         super.setUp();
 
-        LOG.info("STARTING " + getTestName());
+        LOG.info("STARTING {}", getTestName());
 
         ZooKeeper zk = createClient(hp);
         try {

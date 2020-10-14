@@ -18,8 +18,8 @@
 
 package org.apache.zookeeper.test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -34,9 +34,9 @@ import org.apache.zookeeper.data.Stat;
 import org.apache.zookeeper.proto.CreateRequest;
 import org.apache.zookeeper.server.Request;
 import org.apache.zookeeper.server.quorum.QuorumPeer;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,12 +51,12 @@ public class LeaderSessionTrackerTest extends ZKTestCase {
 
     QuorumUtil qu;
 
-    @Before
+    @BeforeEach
     public void setUp() throws Exception {
         qu = new QuorumUtil(1);
     }
 
-    @After
+    @AfterEach
     public void tearDown() throws Exception {
         qu.shutdownAll();
     }
@@ -98,7 +98,7 @@ public class LeaderSessionTrackerTest extends ZKTestCase {
         long sid = qu.getFollowerQuorumPeers().get(0).getActiveServer().getServerId();
         long fakeSessionId = (sid << 56) + 1;
 
-        LOG.info("Fake session Id: " + Long.toHexString(fakeSessionId));
+        LOG.info("Fake session Id: {}", Long.toHexString(fakeSessionId));
 
         Request request = new Request(null, fakeSessionId, 0, OpCode.create, bb, new ArrayList<Id>());
 
@@ -109,7 +109,7 @@ public class LeaderSessionTrackerTest extends ZKTestCase {
         zk.create("/ok", new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 
         Stat stat = zk.exists("/impossible", null);
-        assertEquals("Node from fake session get created", null, stat);
+        assertEquals(null, stat, "Node from fake session get created");
 
     }
 
@@ -136,7 +136,7 @@ public class LeaderSessionTrackerTest extends ZKTestCase {
         long sid = qu.getFollowerQuorumPeers().get(0).getActiveServer().getServerId();
         long locallSession = (sid << 56) + 1;
 
-        LOG.info("Local session Id: " + Long.toHexString(locallSession));
+        LOG.info("Local session Id: {}", Long.toHexString(locallSession));
 
         Request request = new Request(null, locallSession, 0, OpCode.create, bb, new ArrayList<Id>());
 
@@ -147,7 +147,7 @@ public class LeaderSessionTrackerTest extends ZKTestCase {
         zk.create("/ok", new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 
         Stat stat = zk.exists("/success", null);
-        assertTrue("Request from local sesson failed", stat != null);
+        assertTrue(stat != null, "Request from local sesson failed");
 
     }
 

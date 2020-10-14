@@ -20,12 +20,10 @@ package org.apache.zookeeper.cli;
 import java.util.Collections;
 import java.util.List;
 import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
-import org.apache.commons.cli.Parser;
-import org.apache.commons.cli.PosixParser;
-import org.apache.zookeeper.AsyncCallback.StringCallback;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.ZKUtil;
 import org.apache.zookeeper.data.Stat;
@@ -57,7 +55,7 @@ public class LsCommand extends CliCommand {
 
     @Override
     public CliCommand parse(String[] cmdArgs) throws CliParseException {
-        Parser parser = new PosixParser();
+        DefaultParser parser = new DefaultParser();
         try {
             cl = parser.parse(options, cmdArgs);
         } catch (ParseException ex) {
@@ -80,7 +78,7 @@ public class LsCommand extends CliCommand {
             // rewrite to option
             cmdArgs[2] = "-w";
             err.println("'ls path [watch]' has been deprecated. " + "Please use 'ls [-w] path' instead.");
-            Parser parser = new PosixParser();
+            DefaultParser parser = new DefaultParser();
             try {
                 cl = parser.parse(options, cmdArgs);
             } catch (ParseException ex) {
@@ -102,12 +100,7 @@ public class LsCommand extends CliCommand {
         boolean recursive = cl.hasOption("R");
         try {
             if (recursive) {
-                ZKUtil.visitSubTreeDFS(zk, path, watch, new StringCallback() {
-                    @Override
-                    public void processResult(int rc, String path, Object ctx, String name) {
-                        out.println(path);
-                    }
-                });
+                ZKUtil.visitSubTreeDFS(zk, path, watch, (rc, path1, ctx, name) -> out.println(path1));
             } else {
                 Stat stat = withStat ? new Stat() : null;
                 List<String> children = zk.getChildren(path, watch, stat);
@@ -133,11 +126,10 @@ public class LsCommand extends CliCommand {
             }
             out.append(child);
         }
-        out.append("]");
+        out.append("]\n");
         if (stat != null) {
             new StatPrinter(out).print(stat);
         }
-        out.append("\n");
     }
 
 }

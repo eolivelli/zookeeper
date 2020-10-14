@@ -21,13 +21,11 @@ package org.apache.zookeeper.cli;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.OptionGroup;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
-import org.apache.commons.cli.Parser;
-import org.apache.commons.cli.PosixParser;
-import org.apache.zookeeper.AsyncCallback;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Quotas;
@@ -61,7 +59,7 @@ public class SetQuotaCommand extends CliCommand {
 
     @Override
     public CliCommand parse(String[] cmdArgs) throws CliParseException {
-        Parser parser = new PosixParser();
+        DefaultParser parser = new DefaultParser();
         try {
             cl = parser.parse(options, cmdArgs);
         } catch (ParseException ex) {
@@ -194,27 +192,23 @@ public class SetQuotaCommand extends CliCommand {
         String realPath = Quotas.quotaZookeeper + path;
 
         try {
-            ZKUtil.visitSubTreeDFS(zk, realPath, false, new AsyncCallback.StringCallback() {
+            ZKUtil.visitSubTreeDFS(zk, realPath, false, (rc, quotaPath, ctx, name) -> {
+                List<String> children = new ArrayList<>();
+                try {
+                    children = zk.getChildren(quotaPath, false);
+                } catch (KeeperException.NoNodeException ne) {
+                    LOG.debug("child removed during quota check", ne);
+                    return;
+                } catch (InterruptedException | KeeperException e) {
+                    e.printStackTrace();
+                }
 
-                @Override
-                public void processResult(int rc, String quotaPath, Object ctx, String name) {
-                    List<String> children = new ArrayList<>();
-                    try {
-                        children = zk.getChildren(quotaPath, false);
-                    } catch (KeeperException.NoNodeException ne) {
-                        LOG.debug("child removed during quota check", ne);
-                        return;
-                    } catch (InterruptedException | KeeperException e) {
-                        e.printStackTrace();
-                    }
-
-                    if (children.size() == 0) {
-                        return;
-                    }
-                    for (String child : children) {
-                        if (!quotaPath.equals(Quotas.quotaZookeeper + path) && Quotas.limitNode.equals(child)) {
-                            throw new IllegalArgumentException(path + " has a child " + quotaPath.substring(Quotas.quotaZookeeper.length()) + " which has a quota");
-                        }
+                if (children.size() == 0) {
+                    return;
+                }
+                for (String child : children) {
+                    if (!quotaPath.equals(Quotas.quotaZookeeper + path) && Quotas.limitNode.equals(child)) {
+                        throw new IllegalArgumentException(path + " has a child " + quotaPath.substring(Quotas.quotaZookeeper.length()) + " which has a quota");
                     }
                 }
             });

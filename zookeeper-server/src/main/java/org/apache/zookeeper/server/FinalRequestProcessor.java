@@ -21,11 +21,12 @@ package org.apache.zookeeper.server;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import org.apache.commons.lang.StringUtils;
 import org.apache.jute.Record;
+import org.apache.zookeeper.ClientCnxn;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.Code;
 import org.apache.zookeeper.KeeperException.SessionMovedException;
@@ -43,13 +44,16 @@ import org.apache.zookeeper.OpResult.SetDataResult;
 import org.apache.zookeeper.Watcher.WatcherType;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooDefs.OpCode;
+import org.apache.zookeeper.audit.AuditHelper;
 import org.apache.zookeeper.common.Time;
 import org.apache.zookeeper.data.ACL;
 import org.apache.zookeeper.data.Id;
 import org.apache.zookeeper.data.Stat;
+import org.apache.zookeeper.proto.AddWatchRequest;
 import org.apache.zookeeper.proto.CheckWatchesRequest;
 import org.apache.zookeeper.proto.Create2Response;
 import org.apache.zookeeper.proto.CreateResponse;
+import org.apache.zookeeper.proto.ErrorResponse;
 import org.apache.zookeeper.proto.ExistsRequest;
 import org.apache.zookeeper.proto.ExistsResponse;
 import org.apache.zookeeper.proto.GetACLRequest;
@@ -69,6 +73,7 @@ import org.apache.zookeeper.proto.ReplyHeader;
 import org.apache.zookeeper.proto.SetACLResponse;
 import org.apache.zookeeper.proto.SetDataResponse;
 import org.apache.zookeeper.proto.SetWatches;
+import org.apache.zookeeper.proto.SetWatches2;
 import org.apache.zookeeper.proto.SyncRequest;
 import org.apache.zookeeper.proto.SyncResponse;
 import org.apache.zookeeper.server.DataTree.ProcessTxnResult;
@@ -100,18 +105,7 @@ public class FinalRequestProcessor implements RequestProcessor {
         this.requestPathMetricsCollector = zks.getRequestPathMetricsCollector();
     }
 
-    public void processRequest(Request request) {
-        LOG.debug("Processing request:: {}", request);
-
-        // request.addRQRec(">final");
-        long traceMask = ZooTrace.CLIENT_REQUEST_TRACE_MASK;
-        if (request.type == OpCode.ping) {
-            traceMask = ZooTrace.SERVER_PING_TRACE_MASK;
-        }
-        if (LOG.isTraceEnabled()) {
-            ZooTrace.logRequest(LOG, traceMask, 'E', request, "");
-        }
-
+    private ProcessTxnResult applyRequest(Request request) {
         ProcessTxnResult rc = zks.processTxn(request);
 
         // ZOOKEEPER-558:
@@ -125,7 +119,7 @@ public class FinalRequestProcessor implements RequestProcessor {
             // we are just playing diffs from the leader.
             if (closeSession(zks.serverCnxnFactory, request.sessionId)
                 || closeSession(zks.secureServerCnxnFactory, request.sessionId)) {
-                return;
+                return rc;
             }
         }
 
@@ -144,6 +138,23 @@ public class FinalRequestProcessor implements RequestProcessor {
             }
         }
 
+        return rc;
+    }
+
+    public void processRequest(Request request) {
+        LOG.debug("Processing request:: {}", request);
+
+        if (LOG.isTraceEnabled()) {
+            long traceMask = ZooTrace.CLIENT_REQUEST_TRACE_MASK;
+            if (request.type == OpCode.ping) {
+                traceMask = ZooTrace.SERVER_PING_TRACE_MASK;
+            }
+            ZooTrace.logRequest(LOG, traceMask, 'E', request, "");
+        }
+        ProcessTxnResult rc = null;
+        if (!request.isThrottled()) {
+          rc = applyRequest(request);
+        }
         if (request.cnxn == null) {
             return;
         }
@@ -152,12 +163,17 @@ public class FinalRequestProcessor implements RequestProcessor {
         long lastZxid = zks.getZKDatabase().getDataTreeLastProcessedZxid();
 
         String lastOp = "NA";
+        // Notify ZooKeeperServer that the request has finished so that it can
+        // update any request accounting/throttling limits
         zks.decInProcess();
+        zks.requestFinished(request);
         Code err = Code.OK;
         Record rsp = null;
         String path = null;
+        int responseSize = 0;
         try {
             if (request.getHdr() != null && request.getHdr().getType() == OpCode.error) {
+                AuditHelper.addAuditLog(request, rc, true);
                 /*
                  * When local session upgrading is disabled, leader will
                  * reject the ephemeral node creation due to session expire.
@@ -186,12 +202,18 @@ public class FinalRequestProcessor implements RequestProcessor {
                 ServerMetrics.getMetrics().STALE_REPLIES.add(1);
             }
 
+            if (request.isThrottled()) {
+              throw KeeperException.create(Code.THROTTLEDOP);
+            }
+
+            AuditHelper.addAuditLog(request, rc);
+
             switch (request.type) {
             case OpCode.ping: {
                 lastOp = "PING";
                 updateStats(request, lastOp, lastZxid);
 
-                cnxn.sendResponse(new ReplyHeader(-2, lastZxid, 0), null, "response");
+                responseSize = cnxn.sendResponse(new ReplyHeader(ClientCnxn.PING_XID, lastZxid, 0), null, "response");
                 return;
             }
             case OpCode.createSession: {
@@ -362,7 +384,7 @@ public class FinalRequestProcessor implements RequestProcessor {
             case OpCode.setWatches: {
                 lastOp = "SETW";
                 SetWatches setWatches = new SetWatches();
-                // TODO We really should NOT need this!!!!
+                // TODO we really should not need this
                 request.request.rewind();
                 ByteBufferInputStream.byteBuffer2Record(request.request, setWatches);
                 long relativeZxid = setWatches.getRelativeZxid();
@@ -372,7 +394,34 @@ public class FinalRequestProcessor implements RequestProcessor {
                        setWatches.getDataWatches(),
                        setWatches.getExistWatches(),
                        setWatches.getChildWatches(),
+                       Collections.emptyList(),
+                       Collections.emptyList(),
                        cnxn);
+                break;
+            }
+            case OpCode.setWatches2: {
+                lastOp = "STW2";
+                SetWatches2 setWatches = new SetWatches2();
+                // TODO we really should not need this
+                request.request.rewind();
+                ByteBufferInputStream.byteBuffer2Record(request.request, setWatches);
+                long relativeZxid = setWatches.getRelativeZxid();
+                zks.getZKDatabase().setWatches(relativeZxid,
+                        setWatches.getDataWatches(),
+                        setWatches.getExistWatches(),
+                        setWatches.getChildWatches(),
+                        setWatches.getPersistentWatches(),
+                        setWatches.getPersistentRecursiveWatches(),
+                        cnxn);
+                break;
+            }
+            case OpCode.addWatch: {
+                lastOp = "ADDW";
+                AddWatchRequest addWatcherRequest = new AddWatchRequest();
+                ByteBufferInputStream.byteBuffer2Record(request.request,
+                        addWatcherRequest);
+                zks.getZKDatabase().addWatch(addWatcherRequest.getPath(), cnxn, addWatcherRequest.getMode());
+                rsp = new ErrorResponse(0);
                 break;
             }
             case OpCode.getACL: {
@@ -504,7 +553,7 @@ public class FinalRequestProcessor implements RequestProcessor {
                 String prefixPath = getEphemerals.getPrefixPath();
                 Set<String> allEphems = zks.getZKDatabase().getDataTree().getEphemerals(request.sessionId);
                 List<String> ephemerals = new ArrayList<>();
-                if (StringUtils.isBlank(prefixPath) || "/".equals(prefixPath.trim())) {
+                if (prefixPath == null || prefixPath.trim().isEmpty() || "/".equals(prefixPath.trim())) {
                     ephemerals.addAll(allEphems);
                 } else {
                     for (String p : allEphems) {
@@ -533,14 +582,14 @@ public class FinalRequestProcessor implements RequestProcessor {
         } catch (Exception e) {
             // log at error level as we are returning a marshalling
             // error to the user
-            LOG.error("Failed to process " + request, e);
+            LOG.error("Failed to process {}", request, e);
             StringBuilder sb = new StringBuilder();
             ByteBuffer bb = request.request;
             bb.rewind();
             while (bb.hasRemaining()) {
                 sb.append(Integer.toHexString(bb.get() & 0xff));
             }
-            LOG.error("Dumping request buffer: 0x" + sb.toString());
+            LOG.error("Dumping request buffer: 0x{}", sb.toString());
             err = Code.MARSHALLINGERROR;
         }
 
@@ -549,24 +598,39 @@ public class FinalRequestProcessor implements RequestProcessor {
         updateStats(request, lastOp, lastZxid);
 
         try {
-            if (request.type == OpCode.getData && path != null && rsp != null) {
-                // Serialized read responses could be cached by the connection object.
-                // Cache entries are identified by their path and last modified zxid,
-                // so these values are passed along with the response.
-                GetDataResponse getDataResponse = (GetDataResponse) rsp;
-                Stat stat = null;
-                if (getDataResponse.getStat() != null) {
-                    stat = getDataResponse.getStat();
-                }
-                cnxn.sendResponse(hdr, rsp, "response", path, stat);
+            if (path == null || rsp == null) {
+                responseSize = cnxn.sendResponse(hdr, rsp, "response");
             } else {
-                cnxn.sendResponse(hdr, rsp, "response");
+                int opCode = request.type;
+                Stat stat = null;
+                // Serialized read and get children responses could be cached by the connection
+                // object. Cache entries are identified by their path and last modified zxid,
+                // so these values are passed along with the response.
+                switch (opCode) {
+                    case OpCode.getData : {
+                        GetDataResponse getDataResponse = (GetDataResponse) rsp;
+                        stat = getDataResponse.getStat();
+                        responseSize = cnxn.sendResponse(hdr, rsp, "response", path, stat, opCode);
+                        break;
+                    }
+                    case OpCode.getChildren2 : {
+                        GetChildren2Response getChildren2Response = (GetChildren2Response) rsp;
+                        stat = getChildren2Response.getStat();
+                        responseSize = cnxn.sendResponse(hdr, rsp, "response", path, stat, opCode);
+                        break;
+                    }
+                    default:
+                        responseSize = cnxn.sendResponse(hdr, rsp, "response");
+                }
             }
+
             if (request.type == OpCode.closeSession) {
                 cnxn.sendCloseSession();
             }
         } catch (IOException e) {
             LOG.error("FIXMSG", e);
+        } finally {
+            ServerMetrics.getMetrics().RESPONSE_BYTES.add(responseSize);
         }
     }
 

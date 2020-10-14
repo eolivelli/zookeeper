@@ -38,6 +38,7 @@ import org.apache.zookeeper.server.ServerStats;
 import org.apache.zookeeper.server.ZooTrace;
 import org.apache.zookeeper.server.persistence.TxnLog.TxnIterator;
 import org.apache.zookeeper.txn.CreateSessionTxn;
+import org.apache.zookeeper.txn.TxnDigest;
 import org.apache.zookeeper.txn.TxnHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -86,8 +87,20 @@ public class FileTxnSnapLog {
      */
     public interface PlayBackListener {
 
-        void onTxnLoaded(TxnHeader hdr, Record rec);
+        void onTxnLoaded(TxnHeader hdr, Record rec, TxnDigest digest);
 
+    }
+
+    /**
+     * Finalizing restore of data tree through
+     * a set of operations (replaying transaction logs,
+     * calculating data tree digests, and so on.).
+     */
+    private interface RestoreFinalizer {
+        /**
+         * @return the highest zxid of restored data tree.
+         */
+        long run() throws IOException;
     }
 
     /**
@@ -108,7 +121,7 @@ public class FileTxnSnapLog {
             System.getProperty(ZOOKEEPER_DATADIR_AUTOCREATE, ZOOKEEPER_DATADIR_AUTOCREATE_DEFAULT));
 
         trustEmptySnapshot = Boolean.getBoolean(ZOOKEEPER_SNAPSHOT_TRUST_EMPTY);
-        LOG.info(ZOOKEEPER_SNAPSHOT_TRUST_EMPTY + " : " + trustEmptySnapshot);
+        LOG.info("{} : {}", ZOOKEEPER_SNAPSHOT_TRUST_EMPTY, trustEmptySnapshot);
 
         if (!this.dataDir.exists()) {
             if (!enableAutocreate) {
@@ -119,7 +132,7 @@ public class FileTxnSnapLog {
                     ZOOKEEPER_DATADIR_AUTOCREATE));
             }
 
-            if (!this.dataDir.mkdirs()) {
+            if (!this.dataDir.mkdirs() && !this.dataDir.exists()) {
                 throw new DatadirException("Unable to create data directory " + this.dataDir);
             }
         }
@@ -138,7 +151,7 @@ public class FileTxnSnapLog {
                     ZOOKEEPER_DATADIR_AUTOCREATE));
             }
 
-            if (!this.snapDir.mkdirs()) {
+            if (!this.snapDir.mkdirs() && !this.snapDir.exists()) {
                 throw new DatadirException("Unable to create snap directory " + this.snapDir);
             }
         }
@@ -241,6 +254,23 @@ public class FileTxnSnapLog {
             trustEmptyDB = autoCreateDB;
         }
 
+        RestoreFinalizer finalizer = () -> {
+            long highestZxid = fastForwardFromEdits(dt, sessions, listener);
+            // The snapshotZxidDigest will reset after replaying the txn of the
+            // zxid in the snapshotZxidDigest, if it's not reset to null after
+            // restoring, it means either there are not enough txns to cover that
+            // zxid or that txn is missing
+            DataTree.ZxidDigest snapshotZxidDigest = dt.getDigestFromLoadedSnapshot();
+            if (snapshotZxidDigest != null) {
+                LOG.warn(
+                        "Highest txn zxid 0x{} is not covering the snapshot digest zxid 0x{}, "
+                                + "which might lead to inconsistent state",
+                        Long.toHexString(highestZxid),
+                        Long.toHexString(snapshotZxidDigest.getZxid()));
+            }
+            return highestZxid;
+        };
+
         if (-1L == deserializeResult) {
             /* this means that we couldn't find any snapshot, so we need to
              * initialize an empty database (reported in ZOOKEEPER-2325) */
@@ -250,7 +280,8 @@ public class FileTxnSnapLog {
                 if (!trustEmptySnapshot) {
                     throw new IOException(EMPTY_SNAPSHOT_WARNING + "Something is broken!");
                 } else {
-                    LOG.warn(EMPTY_SNAPSHOT_WARNING + "This should only be allowed during upgrading.");
+                    LOG.warn("{}This should only be allowed during upgrading.", EMPTY_SNAPSHOT_WARNING);
+                    return finalizer.run();
                 }
             }
 
@@ -269,19 +300,7 @@ public class FileTxnSnapLog {
             }
         }
 
-        long highestZxid = fastForwardFromEdits(dt, sessions, listener);
-        // The snapshotZxidDigest will reset after replaying the txn of the
-        // zxid in the snapshotZxidDigest, if it's not reset to null after
-        // restoring, it means either there are not enough txns to cover that
-        // zxid or that txn is missing
-        DataTree.ZxidDigest snapshotZxidDigest = dt.getDigestFromLoadedSnapshot();
-        if (snapshotZxidDigest != null) {
-            LOG.warn("Highest txn zxid 0x{} is not covering the snapshot "
-                     + "digest zxid 0x{}, which might lead to inconsistent state",
-                     Long.toHexString(highestZxid),
-                     Long.toHexString(snapshotZxidDigest.getZxid()));
-        }
-        return highestZxid;
+        return finalizer.run();
     }
 
     /**
@@ -320,6 +339,7 @@ public class FileTxnSnapLog {
                 }
                 try {
                     processTransaction(hdr, dt, sessions, itr.getTxn());
+                    dt.compareDigest(hdr, itr.getTxn(), itr.getDigest());
                     txnLoaded++;
                 } catch (KeeperException.NoNodeException e) {
                     throw new IOException("Failed to process transaction type: "
@@ -328,7 +348,7 @@ public class FileTxnSnapLog {
                                           + e.getMessage(),
                                           e);
                 }
-                listener.onTxnLoaded(hdr, itr.getTxn());
+                listener.onTxnLoaded(hdr, itr.getTxn(), itr.getDigest());
                 if (!itr.next()) {
                     break;
                 }
@@ -458,9 +478,9 @@ public class FileTxnSnapLog {
                  * Doing so will eventually result in valid snapshots being
                  * removed during cleanup. */
                 if (snapshotFile.delete()) {
-                    LOG.info("Deleted empty snapshot file: " + snapshotFile.getAbsolutePath());
+                    LOG.info("Deleted empty snapshot file: {}", snapshotFile.getAbsolutePath());
                 } else {
-                    LOG.warn("Could not delete empty snapshot file: " + snapshotFile.getAbsolutePath());
+                    LOG.warn("Could not delete empty snapshot file: {}", snapshotFile.getAbsolutePath());
                 }
             } else {
                 /* Something else went wrong when writing the snapshot out to
@@ -479,23 +499,28 @@ public class FileTxnSnapLog {
      * @return true if able to truncate the log, false if not
      * @throws IOException
      */
-    public boolean truncateLog(long zxid) throws IOException {
-        // close the existing txnLog and snapLog
-        close();
+    public boolean truncateLog(long zxid) {
+        try {
+            // close the existing txnLog and snapLog
+            close();
 
-        // truncate it
-        FileTxnLog truncLog = new FileTxnLog(dataDir);
-        boolean truncated = truncLog.truncate(zxid);
-        truncLog.close();
+            // truncate it
+            try (FileTxnLog truncLog = new FileTxnLog(dataDir)) {
+                boolean truncated = truncLog.truncate(zxid);
 
-        // re-open the txnLog and snapLog
-        // I'd rather just close/reopen this object itself, however that
-        // would have a big impact outside ZKDatabase as there are other
-        // objects holding a reference to this object.
-        txnLog = new FileTxnLog(dataDir);
-        snapLog = new FileSnap(snapDir);
+                // re-open the txnLog and snapLog
+                // I'd rather just close/reopen this object itself, however that
+                // would have a big impact outside ZKDatabase as there are other
+                // objects holding a reference to this object.
+                txnLog = new FileTxnLog(dataDir);
+                snapLog = new FileSnap(snapDir);
 
-        return truncated;
+                return truncated;
+            }
+        } catch (IOException e) {
+            LOG.error("Unable to truncate Txn log", e);
+            return false;
+        }
     }
 
     /**
@@ -523,6 +548,18 @@ public class FileTxnSnapLog {
     }
 
     /**
+     * the n recent valid snapshots
+     * @param n the number of recent valid snapshots
+     * @return the list of n recent valid snapshots, with
+     * the most recent in front
+     * @throws IOException
+     */
+    public List<File> findNValidSnapshots(int n) throws IOException {
+        FileSnap snaplog = new FileSnap(snapDir);
+        return snaplog.findNValidSnapshots(n);
+    }
+
+    /**
      * get the snapshot logs which may contain transactions newer than the given zxid.
      * This includes logs with starting zxid greater than given zxid, as well as the
      * newest transaction log with starting zxid less than given zxid.  The latter log
@@ -542,7 +579,7 @@ public class FileTxnSnapLog {
      * @throws IOException
      */
     public boolean append(Request si) throws IOException {
-        return txnLog.append(si.getHdr(), si.getTxn());
+        return txnLog.append(si.getHdr(), si.getTxn(), si.getTxnDigest());
     }
 
     /**
@@ -574,8 +611,14 @@ public class FileTxnSnapLog {
      * @throws IOException
      */
     public void close() throws IOException {
-        txnLog.close();
-        snapLog.close();
+        if (txnLog != null) {
+            txnLog.close();
+            txnLog = null;
+        }
+        if (snapLog != null) {
+            snapLog.close();
+            snapLog = null;
+        }
     }
 
     @SuppressWarnings("serial")

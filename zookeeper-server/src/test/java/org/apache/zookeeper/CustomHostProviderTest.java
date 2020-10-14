@@ -18,16 +18,16 @@
 
 package org.apache.zookeeper;
 
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.zookeeper.client.HostProvider;
 import org.apache.zookeeper.test.ClientBase;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-public class CustomHostProviderTest extends ZKTestCase implements Watcher {
+public class CustomHostProviderTest extends ZKTestCase {
 
     private AtomicInteger counter = new AtomicInteger(3);
 
@@ -53,9 +53,6 @@ public class CustomHostProviderTest extends ZKTestCase implements Watcher {
         }
 
     }
-    @Override
-    public void process(WatchedEvent event) {
-    }
 
     @Test
     public void testZooKeeperWithCustomHostProvider() throws IOException, InterruptedException {
@@ -64,12 +61,16 @@ public class CustomHostProviderTest extends ZKTestCase implements Watcher {
         int expectedCounter = 3;
         counter.set(expectedCounter);
 
-        ZooKeeper zkDefaults = new ZooKeeper("127.0.0.1:" + CLIENT_PORT, ClientBase.CONNECTION_TIMEOUT, this, false);
+        ZooKeeper zkDefaults = new ZooKeeper(
+            "127.0.0.1:" + CLIENT_PORT,
+            ClientBase.CONNECTION_TIMEOUT,
+            DummyWatcher.INSTANCE,
+            false);
 
         ZooKeeper zkSpecial = new ZooKeeper(
                 "127.0.0.1:" + CLIENT_PORT,
                 ClientBase.CONNECTION_TIMEOUT,
-                this,
+                DummyWatcher.INSTANCE,
                 false,
                 specialHostProvider);
 

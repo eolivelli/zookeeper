@@ -104,7 +104,12 @@ public final class SecurityUtils {
             // unless the system property
             // "zookeeper.server.realm" is set).
             String serverRealm = System.getProperty("zookeeper.server.realm", clientKerberosName.getRealm());
-            KerberosName serviceKerberosName = new KerberosName(servicePrincipal + "@" + serverRealm);
+            String modifiedServerPrincipal = servicePrincipal;
+            // If service principal does not contain realm, then add it
+            if (!modifiedServerPrincipal.contains("@")) {
+                modifiedServerPrincipal = modifiedServerPrincipal + "@" + serverRealm;
+            }
+            KerberosName serviceKerberosName = new KerberosName(modifiedServerPrincipal);
             final String serviceName = serviceKerberosName.getServiceName();
             final String serviceHostname = serviceKerberosName.getHostName();
             final String clientPrincipalName = clientKerberosName.toString();
@@ -115,7 +120,10 @@ public final class SecurityUtils {
                         String[] mechs = {"GSSAPI"};
                         LOG.debug(
                             "creating sasl client: {}={};service={};serviceHostname={}",
-                            entity, clientPrincipalName, serviceName, serviceHostname);
+                            entity,
+                            clientPrincipalName,
+                            serviceName,
+                            serviceHostname);
                         SaslClient saslClient = Sasl.createSaslClient(
                             mechs,
                             clientPrincipalName,
@@ -203,8 +211,10 @@ public final class SecurityUtils {
                                 GSSName.NT_HOSTBASED_SERVICE);
                             GSSCredential cred = manager.createCredential(gssName, GSSContext.DEFAULT_LIFETIME, krb5Mechanism, GSSCredential.ACCEPT_ONLY);
                             subject.getPrivateCredentials().add(cred);
-                            LOG.debug("Added private credential to service principal name: '{}',"
-                                      + " GSSCredential name: {}", servicePrincipalName, cred.getName());
+                            LOG.debug(
+                                "Added private credential to service principal name: '{}', GSSCredential name: {}",
+                                servicePrincipalName,
+                                cred.getName());
                         } catch (GSSException ex) {
                             LOG.warn("Cannot add private credential to subject; clients authentication may fail", ex);
                         }
@@ -217,17 +227,17 @@ public final class SecurityUtils {
                                     saslServer = Sasl.createSaslServer(mech, servicePrincipalName, serviceHostname, null, callbackHandler);
                                     return saslServer;
                                 } catch (SaslException e) {
-                                    LOG.error("Zookeeper Server failed to create a SaslServer to interact with a client during session initiation: ", e);
+                                    LOG.error("Zookeeper Server failed to create a SaslServer to interact with a client during session initiation", e);
                                     return null;
                                 }
                             }
                         });
                     } catch (PrivilegedActionException e) {
                         // TODO: exit server at this point(?)
-                        LOG.error("Zookeeper Quorum member experienced a PrivilegedActionException exception while creating a SaslServer using a JAAS principal context:", e);
+                        LOG.error("Zookeeper Quorum member experienced a PrivilegedActionException exception while creating a SaslServer using a JAAS principal context", e);
                     }
                 } catch (IndexOutOfBoundsException e) {
-                    LOG.error("server principal name/hostname determination error: ", e);
+                    LOG.error("server principal name/hostname determination error", e);
                 }
             } else {
                 // JAAS non-GSSAPI authentication: assuming and supporting only

@@ -18,12 +18,14 @@
 
 package org.apache.zookeeper.server.persistence;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -39,14 +41,16 @@ import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.server.DataNode;
 import org.apache.zookeeper.server.DataTree;
 import org.apache.zookeeper.server.Request;
+import org.apache.zookeeper.server.ZooKeeperServer;
 import org.apache.zookeeper.test.ClientBase;
 import org.apache.zookeeper.test.TestUtils;
 import org.apache.zookeeper.txn.CreateTxn;
 import org.apache.zookeeper.txn.SetDataTxn;
+import org.apache.zookeeper.txn.TxnDigest;
 import org.apache.zookeeper.txn.TxnHeader;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class FileTxnSnapLogTest {
 
@@ -60,14 +64,14 @@ public class FileTxnSnapLogTest {
 
     private File snapVersionDir;
 
-    @Before
+    @BeforeEach
     public void setUp() throws Exception {
         tmpDir = ClientBase.createEmptyTestDir();
         logDir = new File(tmpDir, "logdir");
         snapDir = new File(tmpDir, "snapdir");
     }
 
-    @After
+    @AfterEach
     public void tearDown() throws Exception {
         if (tmpDir != null) {
             TestUtils.deleteFileRecursively(tmpDir);
@@ -166,8 +170,8 @@ public class FileTxnSnapLogTest {
      */
     @Test
     public void testWithAutoCreateDataDir() throws IOException {
-        assertFalse("log directory already exists", logDir.exists());
-        assertFalse("snapshot directory already exists", snapDir.exists());
+        assertFalse(logDir.exists(), "log directory already exists");
+        assertFalse(snapDir.exists(), "snapshot directory already exists");
 
         FileTxnSnapLog fileTxnSnapLog = createFileTxnSnapLogWithAutoCreateDataDir(logDir, snapDir, "true");
 
@@ -181,20 +185,22 @@ public class FileTxnSnapLogTest {
      * Test verifies server should fail when log dir or snap dir doesn't exist.
      * Sets "zookeeper.datadir.autocreate" to false.
      */
-    @Test(expected = FileTxnSnapLog.DatadirException.class)
+    @Test
     public void testWithoutAutoCreateDataDir() throws Exception {
-        assertFalse("log directory already exists", logDir.exists());
-        assertFalse("snapshot directory already exists", snapDir.exists());
+        assertThrows(FileTxnSnapLog.DatadirException.class, () -> {
+            assertFalse(logDir.exists(), "log directory already exists");
+            assertFalse(snapDir.exists(), "snapshot directory already exists");
 
-        try {
-            createFileTxnSnapLogWithAutoCreateDataDir(logDir, snapDir, "false");
-        } catch (FileTxnSnapLog.DatadirException e) {
-            assertFalse(logDir.exists());
-            assertFalse(snapDir.exists());
-            // rethrow exception
-            throw e;
-        }
-        fail("Expected exception from FileTxnSnapLog");
+            try {
+                createFileTxnSnapLogWithAutoCreateDataDir(logDir, snapDir, "false");
+            } catch (FileTxnSnapLog.DatadirException e) {
+                assertFalse(logDir.exists());
+                assertFalse(snapDir.exists());
+                // rethrow exception
+                throw e;
+            }
+            fail("Expected exception from FileTxnSnapLog");
+        });
     }
 
     private void attemptAutoCreateDB(
@@ -209,26 +215,26 @@ public class FileTxnSnapLogTest {
 
         long zxid = fileTxnSnapLog.restore(new DataTree(), sessions, new FileTxnSnapLog.PlayBackListener() {
             @Override
-            public void onTxnLoaded(TxnHeader hdr, Record rec) {
+            public void onTxnLoaded(TxnHeader hdr, Record rec, TxnDigest digest) {
                 // empty by default
             }
         });
-        assertEquals("unexpected zxid", expectedValue, zxid);
+        assertEquals(expectedValue, zxid, "unexpected zxid");
     }
 
     @Test
     public void testAutoCreateDB() throws IOException {
-        assertTrue("cannot create log directory", logDir.mkdir());
-        assertTrue("cannot create snapshot directory", snapDir.mkdir());
+        assertTrue(logDir.mkdir(), "cannot create log directory");
+        assertTrue(snapDir.mkdir(), "cannot create snapshot directory");
         File initFile = new File(logDir, "initialize");
-        assertFalse("initialize file already exists", initFile.exists());
+        assertFalse(initFile.exists(), "initialize file already exists");
 
         Map<Long, Integer> sessions = new ConcurrentHashMap<>();
 
         attemptAutoCreateDB(logDir, snapDir, sessions, "false", -1L);
         attemptAutoCreateDB(logDir, snapDir, sessions, "true", 0L);
 
-        assertTrue("cannot create initialize file", initFile.createNewFile());
+        assertTrue(initFile.createNewFile(), "cannot create initialize file");
         attemptAutoCreateDB(logDir, snapDir, sessions, "false", 0L);
     }
 
@@ -244,7 +250,7 @@ public class FileTxnSnapLogTest {
             fileTxnSnapLog.append(req);
             fileTxnSnapLog.commit();
             long syncElapsedTime = fileTxnSnapLog.getTxnLogElapsedSyncTime();
-            assertNotEquals("Did not update syncElapsedTime!", -1L, syncElapsedTime);
+            assertNotEquals(-1L, syncElapsedTime, "Did not update syncElapsedTime!");
         } finally {
             fileTxnSnapLog.close();
         }
@@ -272,26 +278,30 @@ public class FileTxnSnapLogTest {
         }
     }
 
-    @Test(expected = FileTxnSnapLog.LogDirContentCheckException.class)
+    @Test
     public void testDirCheckWithSnapFilesInLogDir() throws IOException {
-        twoDirSetupWithCorrectFiles();
+        assertThrows(FileTxnSnapLog.LogDirContentCheckException.class, () -> {
+            twoDirSetupWithCorrectFiles();
 
-        // add snapshot files to the log version dir
-        createSnapshotFile(logVersionDir, 3);
-        createSnapshotFile(logVersionDir, 4);
+            // add snapshot files to the log version dir
+            createSnapshotFile(logVersionDir, 3);
+            createSnapshotFile(logVersionDir, 4);
 
-        createFileTxnSnapLogWithNoAutoCreateDataDir(logDir, snapDir);
+            createFileTxnSnapLogWithNoAutoCreateDataDir(logDir, snapDir);
+        });
     }
 
-    @Test(expected = FileTxnSnapLog.SnapDirContentCheckException.class)
+    @Test
     public void testDirCheckWithLogFilesInSnapDir() throws IOException {
-        twoDirSetupWithCorrectFiles();
+        assertThrows(FileTxnSnapLog.SnapDirContentCheckException.class, () -> {
+            twoDirSetupWithCorrectFiles();
 
-        // add transaction log files to the snap version dir
-        createLogFile(snapVersionDir, 3);
-        createLogFile(snapVersionDir, 4);
+            // add transaction log files to the snap version dir
+            createLogFile(snapVersionDir, 3);
+            createLogFile(snapVersionDir, 4);
 
-        createFileTxnSnapLogWithNoAutoCreateDataDir(logDir, snapDir);
+            createFileTxnSnapLogWithNoAutoCreateDataDir(logDir, snapDir);
+        });
     }
 
     /**
@@ -353,4 +363,45 @@ public class FileTxnSnapLogTest {
         assertEquals(ZooDefs.Ids.CREATOR_ALL_ACL, followerDataTree.getACL(a1));
     }
 
+    @Test
+    public void testEmptySnapshotSerialization() throws IOException {
+        File dataDir = ClientBase.createEmptyTestDir();
+        FileTxnSnapLog snaplog = new FileTxnSnapLog(dataDir, dataDir);
+        DataTree dataTree = new DataTree();
+        ConcurrentHashMap<Long, Integer> sessions = new ConcurrentHashMap<>();
+
+        ZooKeeperServer.setDigestEnabled(true);
+        snaplog.save(dataTree, sessions, true);
+        snaplog.restore(dataTree, sessions, (hdr, rec, digest) -> {  });
+
+        assertNull(dataTree.getDigestFromLoadedSnapshot());
+    }
+
+    @Test
+    public void testSnapshotSerializationCompatibility() throws IOException {
+        testSnapshotSerializationCompatibility(true, false);
+        testSnapshotSerializationCompatibility(false, false);
+        testSnapshotSerializationCompatibility(true, true);
+        testSnapshotSerializationCompatibility(false, true);
+    }
+
+    void testSnapshotSerializationCompatibility(Boolean digestEnabled, Boolean snappyEnabled) throws IOException {
+        File dataDir = ClientBase.createEmptyTestDir();
+        FileTxnSnapLog snaplog = new FileTxnSnapLog(dataDir, dataDir);
+        DataTree dataTree = new DataTree();
+        ConcurrentHashMap<Long, Integer> sessions = new ConcurrentHashMap<>();
+        SnapStream.setStreamMode(snappyEnabled ? SnapStream.StreamMode.SNAPPY : SnapStream.StreamMode.DEFAULT_MODE);
+
+        ZooKeeperServer.setDigestEnabled(digestEnabled);
+        TxnHeader txnHeader = new TxnHeader(1, 1, 1, 1 + 1, ZooDefs.OpCode.create);
+        CreateTxn txn = new CreateTxn("/" + 1, "data".getBytes(), null, false, 1);
+        Request request = new Request(1, 1, 1, txnHeader, txn, 1);
+        dataTree.processTxn(request.getHdr(), request.getTxn());
+        snaplog.save(dataTree, sessions, true);
+
+        int expectedNodeCount = dataTree.getNodeCount();
+        ZooKeeperServer.setDigestEnabled(!digestEnabled);
+        snaplog.restore(dataTree, sessions, (hdr, rec, digest) -> {  });
+        assertEquals(expectedNodeCount, dataTree.getNodeCount());
+    }
 }

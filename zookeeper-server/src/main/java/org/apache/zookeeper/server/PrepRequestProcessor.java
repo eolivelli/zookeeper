@@ -56,9 +56,9 @@ import org.apache.zookeeper.proto.ReconfigRequest;
 import org.apache.zookeeper.proto.SetACLRequest;
 import org.apache.zookeeper.proto.SetDataRequest;
 import org.apache.zookeeper.server.ZooKeeperServer.ChangeRecord;
+import org.apache.zookeeper.server.ZooKeeperServer.PrecalculatedDigest;
 import org.apache.zookeeper.server.auth.ProviderRegistry;
 import org.apache.zookeeper.server.auth.ServerAuthenticationProvider;
-import org.apache.zookeeper.server.quorum.Leader.XidRolloverException;
 import org.apache.zookeeper.server.quorum.LeaderZooKeeperServer;
 import org.apache.zookeeper.server.quorum.QuorumPeer.QuorumServer;
 import org.apache.zookeeper.server.quorum.QuorumPeerConfig;
@@ -77,6 +77,7 @@ import org.apache.zookeeper.txn.MultiTxn;
 import org.apache.zookeeper.txn.SetACLTxn;
 import org.apache.zookeeper.txn.SetDataTxn;
 import org.apache.zookeeper.txn.Txn;
+import org.apache.zookeeper.txn.TxnDigest;
 import org.apache.zookeeper.txn.TxnHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -101,8 +102,14 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
     LinkedBlockingQueue<Request> submittedRequests = new LinkedBlockingQueue<Request>();
 
     private final RequestProcessor nextProcessor;
+    private final boolean digestEnabled;
+    private DigestCalculator digestCalculator;
 
     ZooKeeperServer zks;
+
+    public enum DigestOpCode {
+        NOOP, ADD, REMOVE, UPDATE;
+    }
 
     public PrepRequestProcessor(ZooKeeperServer zks, RequestProcessor nextProcessor) {
         super(
@@ -111,6 +118,10 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             + "):", zks.getZooKeeperServerListener());
         this.nextProcessor = nextProcessor;
         this.zks = zks;
+        this.digestEnabled = ZooKeeperServer.isDigestEnabled();
+        if (this.digestEnabled) {
+            this.digestCalculator = new DigestCalculator();
+        }
     }
 
     /**
@@ -122,6 +133,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
     }
     @Override
     public void run() {
+        LOG.info(String.format("PrepRequestProcessor (sid:%d) started, reconfigEnabled=%s", zks.getServerId(), zks.reconfigEnabled));
         try {
             while (true) {
                 ServerMetrics.getMetrics().PREP_PROCESSOR_QUEUE_SIZE.add(submittedRequests.size());
@@ -142,11 +154,6 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                 request.prepStartTime = Time.currentElapsedTime();
                 pRequest(request);
             }
-        } catch (RequestProcessorException e) {
-            if (e.getCause() instanceof XidRolloverException) {
-                LOG.info(e.getCause().getMessage());
-            }
-            handleException(this.getName(), e);
         } catch (Exception e) {
             handleException(this.getName(), e);
         }
@@ -165,6 +172,12 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                         children = n.getChildren();
                     }
                     lastChange = new ChangeRecord(-1, path, n.stat, children.size(), zks.getZKDatabase().aclForNode(n));
+
+                    if (digestEnabled) {
+                        lastChange.precalculatedDigest = new PrecalculatedDigest(
+                                digestCalculator.calculateDigest(path, n), 0);
+                    }
+                    lastChange.data = n.getData();
                 }
             }
         }
@@ -287,7 +300,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
     private String validatePathForCreate(String path, long sessionId) throws BadArgumentsException {
         int lastSlash = path.lastIndexOf('/');
         if (lastSlash == -1 || path.indexOf('\0') != -1 || failCreate) {
-            LOG.info("Invalid path %s with session 0x%s", path, Long.toHexString(sessionId));
+            LOG.info("Invalid path {} with session 0x{}", path, Long.toHexString(sessionId));
             throw new KeeperException.BadArgumentsException(path);
         }
         return path.substring(0, lastSlash);
@@ -303,8 +316,12 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
      * @param record
      */
     protected void pRequest2Txn(int type, long zxid, Request request, Record record, boolean deserialize) throws KeeperException, IOException, RequestProcessorException {
-        request.setHdr(new TxnHeader(request.sessionId, request.cxid, zxid, Time.currentWallTime(), type));
+        if (request.getHdr() == null) {
+            request.setHdr(new TxnHeader(request.sessionId, request.cxid, zxid,
+                    Time.currentWallTime(), type));
+        }
 
+        PrecalculatedDigest precalculatedDigest;
         switch (type) {
         case OpCode.create:
         case OpCode.create2:
@@ -327,8 +344,15 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             request.setTxn(new DeleteTxn(path));
             parentRecord = parentRecord.duplicate(request.getHdr().getZxid());
             parentRecord.childCount--;
+            parentRecord.stat.setPzxid(request.getHdr().getZxid());
+            parentRecord.precalculatedDigest = precalculateDigest(
+                    DigestOpCode.UPDATE, parentPath, parentRecord.data, parentRecord.stat);
             addChangeRecord(parentRecord);
-            addChangeRecord(new ChangeRecord(request.getHdr().getZxid(), path, null, -1, null));
+
+            nodeRecord = new ChangeRecord(request.getHdr().getZxid(), path, null, -1, null);
+            nodeRecord.precalculatedDigest = precalculateDigest(DigestOpCode.REMOVE, path);
+            setTxnDigest(request, nodeRecord.precalculatedDigest);
+            addChangeRecord(nodeRecord);
             break;
         }
         case OpCode.delete:
@@ -349,8 +373,15 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             request.setTxn(new DeleteTxn(path));
             parentRecord = parentRecord.duplicate(request.getHdr().getZxid());
             parentRecord.childCount--;
+            parentRecord.stat.setPzxid(request.getHdr().getZxid());
+            parentRecord.precalculatedDigest = precalculateDigest(
+                    DigestOpCode.UPDATE, parentPath, parentRecord.data, parentRecord.stat);
             addChangeRecord(parentRecord);
-            addChangeRecord(new ChangeRecord(request.getHdr().getZxid(), path, null, -1, null));
+
+            nodeRecord = new ChangeRecord(request.getHdr().getZxid(), path, null, -1, null);
+            nodeRecord.precalculatedDigest = precalculateDigest(DigestOpCode.REMOVE, path);
+            setTxnDigest(request, nodeRecord.precalculatedDigest);
+            addChangeRecord(nodeRecord);
             break;
         case OpCode.setData:
             zks.sessionTracker.checkSession(request.sessionId, request.getOwner());
@@ -366,10 +397,16 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             request.setTxn(new SetDataTxn(path, setDataRequest.getData(), newVersion));
             nodeRecord = nodeRecord.duplicate(request.getHdr().getZxid());
             nodeRecord.stat.setVersion(newVersion);
+            nodeRecord.stat.setMtime(request.getHdr().getTime());
+            nodeRecord.stat.setMzxid(zxid);
+            nodeRecord.data = setDataRequest.getData();
+            nodeRecord.precalculatedDigest = precalculateDigest(
+                    DigestOpCode.UPDATE, path, nodeRecord.data, nodeRecord.stat);
+            setTxnDigest(request, nodeRecord.precalculatedDigest);
             addChangeRecord(nodeRecord);
             break;
         case OpCode.reconfig:
-            if (!QuorumPeerConfig.isReconfigEnabled()) {
+            if (!zks.isReconfigEnabled()) {
                 LOG.error("Reconfig operation requested but reconfig feature is disabled.");
                 throw new KeeperException.ReconfigDisabledException();
             }
@@ -496,10 +533,20 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
 
             nodeRecord = getRecordForPath(ZooDefs.CONFIG_NODE);
             zks.checkACL(request.cnxn, nodeRecord.acl, ZooDefs.Perms.WRITE, request.authInfo, null, null);
-            request.setTxn(new SetDataTxn(ZooDefs.CONFIG_NODE, request.qv.toString().getBytes(), -1));
+            SetDataTxn setDataTxn = new SetDataTxn(ZooDefs.CONFIG_NODE, request.qv.toString().getBytes(), -1);
+            request.setTxn(setDataTxn);
             nodeRecord = nodeRecord.duplicate(request.getHdr().getZxid());
             nodeRecord.stat.setVersion(-1);
+            nodeRecord.stat.setMtime(request.getHdr().getTime());
+            nodeRecord.stat.setMzxid(zxid);
+            nodeRecord.data = setDataTxn.getData();
+            // Reconfig is currently a noop from digest computation
+            // perspective since config node is not covered by the digests.
+            nodeRecord.precalculatedDigest = precalculateDigest(
+                    DigestOpCode.NOOP, ZooDefs.CONFIG_NODE, nodeRecord.data, nodeRecord.stat);
+            setTxnDigest(request, nodeRecord.precalculatedDigest);
             addChangeRecord(nodeRecord);
+
             break;
         case OpCode.setACL:
             zks.sessionTracker.checkSession(request.sessionId, request.getOwner());
@@ -516,6 +563,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             request.setTxn(new SetACLTxn(path, listACL, newVersion));
             nodeRecord = nodeRecord.duplicate(request.getHdr().getZxid());
             nodeRecord.stat.setAversion(newVersion);
+            nodeRecord.precalculatedDigest = precalculateDigest(
+                    DigestOpCode.UPDATE, path, nodeRecord.data, nodeRecord.stat);
+            setTxnDigest(request, nodeRecord.precalculatedDigest);
             addChangeRecord(nodeRecord);
             break;
         case OpCode.createSession:
@@ -548,7 +598,20 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                     }
                 }
                 for (String path2Delete : es) {
-                    addChangeRecord(new ChangeRecord(request.getHdr().getZxid(), path2Delete, null, 0, null));
+                    if (digestEnabled) {
+                        parentPath = getParentPathAndValidate(path2Delete);
+                        parentRecord = getRecordForPath(parentPath);
+                        parentRecord = parentRecord.duplicate(request.getHdr().getZxid());
+                        parentRecord.stat.setPzxid(request.getHdr().getZxid());
+                        parentRecord.precalculatedDigest = precalculateDigest(
+                                DigestOpCode.UPDATE, parentPath, parentRecord.data, parentRecord.stat);
+                        addChangeRecord(parentRecord);
+                    }
+                    nodeRecord = new ChangeRecord(
+                            request.getHdr().getZxid(), path2Delete, null, 0, null);
+                    nodeRecord.precalculatedDigest = precalculateDigest(
+                            DigestOpCode.REMOVE, path2Delete);
+                    addChangeRecord(nodeRecord);
                 }
                 if (ZooKeeperServer.isCloseSessionTxnEnabled()) {
                     request.setTxn(new CloseSessionTxn(new ArrayList<String>(es)));
@@ -572,8 +635,14 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                 checkAndIncVersion(nodeRecord.stat.getVersion(), checkVersionRequest.getVersion(), path)));
             break;
         default:
-            LOG.warn("unknown type " + type);
+            LOG.warn("unknown type {}", type);
             break;
+        }
+
+        // If the txn is not going to mutate anything, like createSession,
+        // we just set the current tree digest in it
+        if (request.getTxnDigest() == null && digestEnabled) {
+            setTxnDigest(request);
         }
     }
 
@@ -634,15 +703,31 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         } else {
             request.setTxn(new CreateTxn(path, data, listACL, createMode.isEphemeral(), newCversion));
         }
-        StatPersisted s = new StatPersisted();
-        if (createMode.isEphemeral()) {
-            s.setEphemeralOwner(request.sessionId);
+
+        TxnHeader hdr = request.getHdr();
+        long ephemeralOwner = 0;
+        if (createMode.isContainer()) {
+            ephemeralOwner = EphemeralType.CONTAINER_EPHEMERAL_OWNER;
+        } else if (createMode.isTTL()) {
+            ephemeralOwner = EphemeralType.TTL.toEphemeralOwner(ttl);
+        } else if (createMode.isEphemeral()) {
+            ephemeralOwner = request.sessionId;
         }
+        StatPersisted s = DataTree.createStat(hdr.getZxid(), hdr.getTime(), ephemeralOwner);
         parentRecord = parentRecord.duplicate(request.getHdr().getZxid());
         parentRecord.childCount++;
         parentRecord.stat.setCversion(newCversion);
+        parentRecord.stat.setPzxid(request.getHdr().getZxid());
+        parentRecord.precalculatedDigest = precalculateDigest(
+                DigestOpCode.UPDATE, parentPath, parentRecord.data, parentRecord.stat);
         addChangeRecord(parentRecord);
-        addChangeRecord(new ChangeRecord(request.getHdr().getZxid(), path, s, 0, listACL));
+        ChangeRecord nodeRecord = new ChangeRecord(
+                request.getHdr().getZxid(), path, s, 0, listACL);
+        nodeRecord.data = data;
+        nodeRecord.precalculatedDigest = precalculateDigest(
+                DigestOpCode.ADD, path, nodeRecord.data, s);
+        setTxnDigest(request, nodeRecord.precalculatedDigest);
+        addChangeRecord(nodeRecord);
     }
 
     private void validatePath(String path, long sessionId) throws BadArgumentsException {
@@ -681,6 +766,23 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         request.setHdr(null);
         request.setTxn(null);
 
+        if (!request.isThrottled()) {
+          pRequestHelper(request);
+        }
+
+        request.zxid = zks.getZxid();
+        long timeFinishedPrepare = Time.currentElapsedTime();
+        ServerMetrics.getMetrics().PREP_PROCESS_TIME.add(timeFinishedPrepare - request.prepStartTime);
+        nextProcessor.processRequest(request);
+        ServerMetrics.getMetrics().PROPOSAL_PROCESS_TIME.add(Time.currentElapsedTime() - timeFinishedPrepare);
+    }
+
+    /**
+     * This method is a helper to pRequest method
+     *
+     * @param request
+     */
+    private void pRequestHelper(Request request) throws RequestProcessorException {
         try {
             switch (request.type) {
             case OpCode.createContainer:
@@ -730,6 +832,8 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
 
                 //Store off current pending change records in case we need to rollback
                 Map<String, ChangeRecord> pendingChanges = getPendingChanges(multiRequest);
+                request.setHdr(new TxnHeader(request.sessionId, request.cxid, zxid,
+                        Time.currentWallTime(), request.type));
 
                 for (Op op : multiRequest) {
                     Record subrequest = op.toRequestRecord();
@@ -747,7 +851,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                         /* Prep the request and convert to a Txn */
                         try {
                             pRequest2Txn(op.getType(), zxid, request, subrequest, false);
-                            type = request.getHdr().getType();
+                            type = op.getType();
                             txn = request.getTxn();
                         } catch (KeeperException e) {
                             ke = e;
@@ -780,8 +884,10 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                     }
                 }
 
-                request.setHdr(new TxnHeader(request.sessionId, request.cxid, zxid, Time.currentWallTime(), request.type));
                 request.setTxn(new MultiTxn(txns));
+                if (digestEnabled) {
+                    setTxnDigest(request);
+                }
 
                 break;
 
@@ -803,14 +909,16 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             case OpCode.getChildren2:
             case OpCode.ping:
             case OpCode.setWatches:
+            case OpCode.setWatches2:
             case OpCode.checkWatches:
             case OpCode.removeWatches:
             case OpCode.getEphemerals:
             case OpCode.multiRead:
+            case OpCode.addWatch:
                 zks.sessionTracker.checkSession(request.sessionId, request.getOwner());
                 break;
             default:
-                LOG.warn("unknown type " + request.type);
+                LOG.warn("unknown type {}", request.type);
                 break;
             }
         } catch (KeeperException e) {
@@ -820,16 +928,17 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             }
 
             if (e.code().intValue() > Code.APIERROR.intValue()) {
-                LOG.info("Got user-level KeeperException when processing {} Error Path:{} Error:{}",
-                         request.toString(),
-                         e.getPath(),
-                         e.getMessage());
+                LOG.info(
+                    "Got user-level KeeperException when processing {} Error Path:{} Error:{}",
+                    request.toString(),
+                    e.getPath(),
+                    e.getMessage());
             }
             request.setException(e);
         } catch (Exception e) {
             // log at error level as we are returning a marshalling
             // error to the user
-            LOG.error("Failed to process " + request, e);
+            LOG.error("Failed to process {}", request, e);
 
             StringBuilder sb = new StringBuilder();
             ByteBuffer bb = request.request;
@@ -842,15 +951,12 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                 sb.append("request buffer is null");
             }
 
-            LOG.error("Dumping request buffer: 0x" + sb.toString());
+            LOG.error("Dumping request buffer: 0x{}", sb.toString());
             if (request.getHdr() != null) {
                 request.getHdr().setType(OpCode.error);
                 request.setTxn(new ErrorTxn(Code.MARSHALLINGERROR.intValue()));
             }
         }
-        request.zxid = zks.getZxid();
-        ServerMetrics.getMetrics().PREP_PROCESS_TIME.add(Time.currentElapsedTime() - request.prepStartTime);
-        nextProcessor.processRequest(request);
     }
 
     private static List<ACL> removeDuplicates(final List<ACL> acls) {
@@ -926,7 +1032,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                 for (Id cid : authInfo) {
                     ServerAuthenticationProvider ap = ProviderRegistry.getServerProvider(cid.getScheme());
                     if (ap == null) {
-                        LOG.error("Missing AuthenticationProvider for " + cid.getScheme());
+                        LOG.error("Missing AuthenticationProvider for {}", cid.getScheme());
                     } else if (ap.isAuthenticated()) {
                         authIdValid = true;
                         rv.add(new ACL(a.getPerms(), cid));
@@ -959,4 +1065,81 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         nextProcessor.shutdown();
     }
 
+    /**
+     * Calculate the node digest and tree digest after the change.
+     *
+     * @param type the type of operations about the digest change
+     * @param path the path of the node
+     * @param data the data of the node
+     * @param s the stat of the node
+     *
+     * @return PrecalculatedDigest the pair of node and tree digest
+     */
+    private PrecalculatedDigest precalculateDigest(DigestOpCode type, String path,
+            byte[] data, StatPersisted s) throws KeeperException.NoNodeException {
+
+        if (!digestEnabled) {
+            return null;
+        }
+
+        long prevNodeDigest;
+        long newNodeDigest;
+
+        switch (type) {
+            case ADD:
+                prevNodeDigest = 0;
+                newNodeDigest = digestCalculator.calculateDigest(path, data, s);
+                break;
+            case REMOVE:
+                prevNodeDigest = getRecordForPath(path).precalculatedDigest.nodeDigest;
+                newNodeDigest = 0;
+                break;
+            case UPDATE:
+                prevNodeDigest = getRecordForPath(path).precalculatedDigest.nodeDigest;
+                newNodeDigest = digestCalculator.calculateDigest(path, data, s);
+                break;
+            case NOOP:
+                newNodeDigest = prevNodeDigest = 0;
+                break;
+            default:
+                return null;
+        }
+        long treeDigest = getCurrentTreeDigest() - prevNodeDigest + newNodeDigest;
+        return new PrecalculatedDigest(newNodeDigest, treeDigest);
+    }
+
+    private PrecalculatedDigest precalculateDigest(
+            DigestOpCode type, String path) throws KeeperException.NoNodeException {
+        return precalculateDigest(type, path, null, null);
+    }
+
+    /**
+     * Query the current tree digest from DataTree or outstandingChanges list.
+     *
+     * @return current tree digest
+     */
+    private long getCurrentTreeDigest() {
+        long digest;
+        synchronized (zks.outstandingChanges) {
+            if (zks.outstandingChanges.isEmpty()) {
+                digest = zks.getZKDatabase().getDataTree().getTreeDigest();
+                LOG.debug("Digest got from data tree is: {}", digest);
+            } else {
+                digest = zks.outstandingChanges.peekLast().precalculatedDigest.treeDigest;
+                LOG.debug("Digest got from outstandingChanges is: {}", digest);
+            }
+        }
+        return digest;
+    }
+
+    private void setTxnDigest(Request request) {
+        request.setTxnDigest(new TxnDigest(digestCalculator.getDigestVersion(), getCurrentTreeDigest()));
+    }
+
+    private void setTxnDigest(Request request, PrecalculatedDigest preCalculatedDigest) {
+        if (preCalculatedDigest == null) {
+            return;
+        }
+        request.setTxnDigest(new TxnDigest(digestCalculator.getDigestVersion(), preCalculatedDigest.treeDigest));
+    }
 }

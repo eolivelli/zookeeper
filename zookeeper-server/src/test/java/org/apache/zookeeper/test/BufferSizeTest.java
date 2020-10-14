@@ -18,8 +18,8 @@
 
 package org.apache.zookeeper.test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 import java.io.File;
 import java.io.IOException;
 import org.apache.jute.BinaryInputArchive;
@@ -27,8 +27,8 @@ import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 public class BufferSizeTest extends ClientBase {
 
@@ -37,10 +37,10 @@ public class BufferSizeTest extends ClientBase {
 
     private ZooKeeper zk;
 
-    @Before
+    @BeforeEach
     public void setMaxBuffer() throws IOException, InterruptedException {
         System.setProperty("jute.maxbuffer", "" + TEST_MAXBUFFER);
-        assertEquals("Can't set jute.maxbuffer!", TEST_MAXBUFFER, BinaryInputArchive.maxBuffer);
+        assertEquals(TEST_MAXBUFFER, BinaryInputArchive.maxBuffer, "Can't set jute.maxbuffer!");
         zk = createClient();
     }
 
@@ -125,7 +125,7 @@ public class BufferSizeTest extends ClientBase {
             startServer();
             fail(failureMsg);
         } catch (IOException e) {
-            LOG.info("Successfully caught IOException: " + e);
+            LOG.debug("Successfully caught IOException", e);
         } finally {
             tmpDir = oldTmpDir;
         }

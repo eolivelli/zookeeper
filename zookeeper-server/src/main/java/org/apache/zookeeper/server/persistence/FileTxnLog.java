@@ -20,6 +20,7 @@ package org.apache.zookeeper.server.persistence;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.Closeable;
 import java.io.EOFException;
 import java.io.File;
 import java.io.FileInputStream;
@@ -44,7 +45,9 @@ import org.apache.jute.OutputArchive;
 import org.apache.jute.Record;
 import org.apache.zookeeper.server.ServerMetrics;
 import org.apache.zookeeper.server.ServerStats;
+import org.apache.zookeeper.server.TxnLogEntry;
 import org.apache.zookeeper.server.util.SerializeUtils;
+import org.apache.zookeeper.txn.TxnDigest;
 import org.apache.zookeeper.txn.TxnHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,7 +94,7 @@ import org.slf4j.LoggerFactory;
  *     0 padded to EOF (filled during preallocation stage)
  * </pre></blockquote>
  */
-public class FileTxnLog implements TxnLog {
+public class FileTxnLog implements TxnLog, Closeable {
 
     private static final Logger LOG;
 
@@ -260,18 +263,25 @@ public class FileTxnLog implements TxnLog {
      * returns true iff something appended, otw false
      */
     public synchronized boolean append(TxnHeader hdr, Record txn) throws IOException {
+              return append(hdr, txn, null);
+    }
+
+    @Override
+    public synchronized boolean append(TxnHeader hdr, Record txn, TxnDigest digest) throws IOException {
         if (hdr == null) {
             return false;
         }
         if (hdr.getZxid() <= lastZxidSeen) {
-            LOG.warn("Current zxid " + hdr.getZxid() + " is <= " + lastZxidSeen + " for " + hdr.getType());
+            LOG.warn(
+                "Current zxid {} is <= {} for {}",
+                hdr.getZxid(),
+                lastZxidSeen,
+                hdr.getType());
         } else {
             lastZxidSeen = hdr.getZxid();
         }
         if (logStream == null) {
-            if (LOG.isInfoEnabled()) {
-                LOG.info("Creating new log file: " + Util.makeLogName(hdr.getZxid()));
-            }
+            LOG.info("Creating new log file: {}", Util.makeLogName(hdr.getZxid()));
 
             logFileWrite = new File(logDir, Util.makeLogName(hdr.getZxid()));
             fos = new FileOutputStream(logFileWrite);
@@ -285,7 +295,7 @@ public class FileTxnLog implements TxnLog {
             streamsToFlush.add(fos);
         }
         filePadding.padFile(fos.getChannel());
-        byte[] buf = Util.marshallTxnEntry(hdr, txn);
+        byte[] buf = Util.marshallTxnEntry(hdr, txn, digest);
         if (buf == null || buf.length == 0) {
             throw new IOException("Faulty serialization for header " + "and txn");
         }
@@ -394,15 +404,13 @@ public class FileTxnLog implements TxnLog {
                     if (serverStats != null) {
                         serverStats.incrementFsyncThresholdExceedCount();
                     }
-                    LOG.warn("fsync-ing the write ahead log in "
-                             + Thread.currentThread().getName()
-                             + " took "
-                             + syncElapsedMS
-                             + "ms which will adversely effect operation latency. "
-                             + "File size is "
-                             + channel.size()
-                             + " bytes. "
-                             + "See the ZooKeeper troubleshooting guide");
+
+                    LOG.warn(
+                        "fsync-ing the write ahead log in {} took {}ms which will adversely effect operation latency."
+                            + "File size is {} bytes. See the ZooKeeper troubleshooting guide",
+                        Thread.currentThread().getName(),
+                        syncElapsedMS,
+                        channel.size());
                 }
 
                 ServerMetrics.getMetrics().FSYNC_TIME.add(syncElapsedMS);
@@ -612,6 +620,7 @@ public class FileTxnLog implements TxnLog {
         long zxid;
         TxnHeader hdr;
         Record record;
+        TxnDigest digest;
         File logFile;
         InputArchive ia;
         static final String CRC_ERROR = "CRC check failed";
@@ -768,8 +777,10 @@ public class FileTxnLog implements TxnLog {
                 if (crcValue != crc.getValue()) {
                     throw new IOException(CRC_ERROR);
                 }
-                hdr = new TxnHeader();
-                record = SerializeUtils.deserializeTxn(bytes, hdr);
+                TxnLogEntry logEntry = SerializeUtils.deserializeTxn(bytes);
+                hdr = logEntry.getHeader();
+                record = logEntry.getTxn();
+                digest = logEntry.getDigest();
             } catch (EOFException e) {
                 LOG.debug("EOF exception", e);
                 inputStream.close();
@@ -806,6 +817,10 @@ public class FileTxnLog implements TxnLog {
          */
         public Record getTxn() {
             return record;
+        }
+
+        public TxnDigest getDigest() {
+            return digest;
         }
 
         /**

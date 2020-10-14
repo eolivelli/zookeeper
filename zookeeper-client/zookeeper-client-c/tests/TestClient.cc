@@ -210,6 +210,9 @@ class Zookeeper_simpleSystem : public CPPUNIT_NS::TestFixture
 #ifdef ZOO_IPV6_ENABLED
     CPPUNIT_TEST(testIPV6);
 #endif
+#ifdef HAVE_OPENSSL_H
+    CPPUNIT_TEST(testSSL);
+#endif
     CPPUNIT_TEST(testCreate);
     CPPUNIT_TEST(testCreateContainer);
     CPPUNIT_TEST(testCreateTtl);
@@ -224,6 +227,7 @@ class Zookeeper_simpleSystem : public CPPUNIT_NS::TestFixture
     CPPUNIT_TEST(testWatcherAutoResetWithLocal);
     CPPUNIT_TEST(testGetChildren2);
     CPPUNIT_TEST(testLastZxid);
+    CPPUNIT_TEST(testServersResolutionDelay);
     CPPUNIT_TEST(testRemoveWatchers);
 #endif
     CPPUNIT_TEST_SUITE_END();
@@ -267,7 +271,16 @@ class Zookeeper_simpleSystem : public CPPUNIT_NS::TestFixture
         sleep(1);
         return zk;
     }
-    
+
+#ifdef HAVE_OPENSSL_H
+    zhandle_t *createSSLClient(const char *hp, const char *cert, watchctx_t *ctx) {
+        zhandle_t *zk = zookeeper_init_ssl(hp, cert, watcher, 30000, 0, ctx, 0);
+        ctx->zh = zk;
+        sleep(1);
+        return zk;
+    }
+#endif
+
     zhandle_t *createchClient(watchctx_t *ctx, const char* chroot) {
         zhandle_t *zk = zookeeper_init(chroot, watcher, 10000, 0, ctx, 0);
         ctx->zh = zk;
@@ -313,9 +326,10 @@ public:
     
     /** have a callback in the default watcher **/
     static void default_zoo_watcher(zhandle_t *zzh, int type, int state, const char *path, void *context){
-        int zrc = 0;
+        int zrc;
         struct String_vector str_vec = {0, NULL};
         zrc = zoo_wget_children(zzh, "/mytest", default_zoo_watcher, NULL, &str_vec);
+        CPPUNIT_ASSERT(zrc == ZOK || zrc == ZCLOSING);
     }
 
     /** ZOOKEEPER-1057 This checks that the client connects to the second server when the first is not reachable **/
@@ -341,35 +355,110 @@ public:
 
     /** this checks for a deadlock in calling zookeeper_close and calls from a default watcher that might get triggered just when zookeeper_close() is in progress **/
     void testHangingClient() {
-        int zrc = 0;
+        int zrc;
         char buff[10] = "testall";
         char path[512];
-        watchctx_t *ctx;
+        watchctx_t *ctx = NULL;
         struct String_vector str_vec = {0, NULL};
         zhandle_t *zh = zookeeper_init(hostPorts, NULL, 10000, 0, ctx, 0);
         sleep(1);
         zrc = zoo_create(zh, "/mytest", buff, 10, &ZOO_OPEN_ACL_UNSAFE, 0, path, 512);
+        CPPUNIT_ASSERT_EQUAL((int)ZOK, zrc);
         zrc = zoo_wget_children(zh, "/mytest", default_zoo_watcher, NULL, &str_vec);
+        CPPUNIT_ASSERT_EQUAL((int)ZOK, zrc);
         zrc = zoo_create(zh, "/mytest/test1", buff, 10, &ZOO_OPEN_ACL_UNSAFE, 0, path, 512);
+        CPPUNIT_ASSERT_EQUAL((int)ZOK, zrc);
         zrc = zoo_wget_children(zh, "/mytest", default_zoo_watcher, NULL, &str_vec);
+        CPPUNIT_ASSERT_EQUAL((int)ZOK, zrc);
         zrc = zoo_delete(zh, "/mytest/test1", -1);
+        CPPUNIT_ASSERT_EQUAL((int)ZOK, zrc);
         zookeeper_close(zh);
     }
 
     void testBadDescriptor() {
-        int zrc = 0;
-        watchctx_t *ctx;
+        watchctx_t *ctx = NULL;
         zhandle_t *zh = zookeeper_init(hostPorts, NULL, 10000, 0, ctx, 0);
         sleep(1);
         zh->io_count = 0;
         //close socket
-        close(zh->fd);
+        close_zsock(zh->fd);
         sleep(1);
         //Check that doIo isn't spinning
         CPPUNIT_ASSERT(zh->io_count < 2);
         zookeeper_close(zh);
     }
-    
+
+    /* Checks the zoo_set_servers_resolution_delay default and operation */
+    void testServersResolutionDelay() {
+        watchctx_t ctx;
+        zhandle_t *zk = createClient(&ctx);
+        int rc;
+        struct timeval tv;
+        struct Stat stat;
+
+        CPPUNIT_ASSERT(zk);
+        CPPUNIT_ASSERT(zk->resolve_delay_ms == 0);
+
+        // a) Default/0 case: resolve at each request.
+
+        tv = zk->last_resolve;
+        usleep(10000); // 10ms
+
+        rc = zoo_exists(zk, "/", 0, &stat);
+        CPPUNIT_ASSERT_EQUAL((int)ZOK, rc);
+
+        // Must have changed because of the request.
+        CPPUNIT_ASSERT(zk->last_resolve.tv_sec != tv.tv_sec ||
+                       zk->last_resolve.tv_usec != tv.tv_usec);
+
+        // b) Disabled/-1 case: never perform "routine" resolutions.
+
+        rc = zoo_set_servers_resolution_delay(zk, -1); // Disabled
+        CPPUNIT_ASSERT_EQUAL((int)ZOK, rc);
+
+        tv = zk->last_resolve;
+        usleep(10000); // 10ms
+
+        rc = zoo_exists(zk, "/", 0, &stat);
+        CPPUNIT_ASSERT_EQUAL((int)ZOK, rc);
+
+        // Must not have changed as auto-resolution is disabled.
+        CPPUNIT_ASSERT(zk->last_resolve.tv_sec == tv.tv_sec &&
+                       zk->last_resolve.tv_usec == tv.tv_usec);
+
+        // c) Invalid delay is rejected.
+
+        rc = zoo_set_servers_resolution_delay(zk, -1000); // Bad
+        CPPUNIT_ASSERT_EQUAL((int)ZBADARGUMENTS, rc);
+
+        // d) Valid delay, no resolution within window.
+
+        rc = zoo_set_servers_resolution_delay(zk, 500); // 0.5s
+        CPPUNIT_ASSERT_EQUAL((int)ZOK, rc);
+
+        tv = zk->last_resolve;
+        usleep(10000); // 10ms
+
+        rc = zoo_exists(zk, "/", 0, &stat);
+        CPPUNIT_ASSERT_EQUAL((int)ZOK, rc);
+
+        // Must not have changed because the request (hopefully!)
+        // executed in less than 0.5s.
+        CPPUNIT_ASSERT(zk->last_resolve.tv_sec == tv.tv_sec &&
+                       zk->last_resolve.tv_usec == tv.tv_usec);
+
+        // e) Valid delay, at least one resolution after delay.
+
+        usleep(500 * 1000); // 0.5s
+
+        rc = zoo_exists(zk, "/", 0, &stat);
+        CPPUNIT_ASSERT_EQUAL((int)ZOK, rc);
+
+        // Must have changed because we waited 0.5s between the
+        // capture and the last request.
+        CPPUNIT_ASSERT(zk->last_resolve.tv_sec != tv.tv_sec ||
+                       zk->last_resolve.tv_usec != tv.tv_usec);
+    }
 
     void testPing()
     {
@@ -450,6 +539,10 @@ public:
 
     static void create_completion_fn(int rc, const char* value, const void *data) {
         CPPUNIT_ASSERT_EQUAL((int) ZOK, rc);
+        if (data) {
+            const char *expected_value = (const char *)data;
+            CPPUNIT_ASSERT_EQUAL(string(expected_value), string(value));
+        }
         count++;
     }
 
@@ -785,6 +878,19 @@ public:
         CPPUNIT_ASSERT_EQUAL((int) ZOK, rc);
     }
 
+#ifdef HAVE_OPENSSL_H
+    void testSSL() {
+        watchctx_t ctx;
+        zoo_set_debug_level(ZOO_LOG_LEVEL_DEBUG);
+        zhandle_t *zk = createSSLClient("127.0.0.1:22281", "/tmp/certs/server.crt,/tmp/certs/client.crt,/tmp/certs/clientkey.pem,password", &ctx);
+        CPPUNIT_ASSERT(zk);
+        int rc = 0;
+        rc = zoo_create(zk, "/ssl", NULL, -1,
+                        &ZOO_OPEN_ACL_UNSAFE, 0, 0, 0);
+        CPPUNIT_ASSERT_EQUAL((int) ZOK, rc);
+    }
+#endif
+
     void testNullData() {
         watchctx_t ctx;
         zhandle_t *zk = createClient(&ctx);
@@ -991,6 +1097,12 @@ public:
         rc = zoo_create(zk_ch, path, "", 0, &ZOO_OPEN_ACL_UNSAFE, 0, path_buffer, path_buffer_len);
         CPPUNIT_ASSERT_EQUAL((int) ZOK, rc);
         CPPUNIT_ASSERT_EQUAL(string(path), string(path_buffer));
+
+        const char* path2282 = "/zookeeper2282";
+        rc = zoo_acreate(zk_ch, path2282, "", 0, &ZOO_OPEN_ACL_UNSAFE, 0,
+                         create_completion_fn, path2282);
+        waitForCreateCompletion(3);
+        CPPUNIT_ASSERT(count == 0);
     }
 
     // Test creating normal handle via zookeeper_init then explicitly setting callback
@@ -1004,8 +1116,8 @@ public:
         CPPUNIT_ASSERT_EQUAL(zoo_get_log_callback(zk), &logMessageHandler);
 
         // Log 10 messages and ensure all go to callback
-        int expected = 10;
-        for (int i = 0; i < expected; i++)
+        const std::size_t expected = 10;
+        for (std::size_t i = 0; i < expected; i++)
         {
             LOG_INFO(LOGCALLBACK(zk), "%s #%d", __FUNCTION__, i);
         }
@@ -1022,12 +1134,12 @@ public:
 
         // All the connection messages should have gone to the callback -- don't
         // want this to be a maintenance issue so we're not asserting exact count
-        int numBefore = logMessages.size();
+        std::size_t numBefore = logMessages.size();
         CPPUNIT_ASSERT(numBefore != 0);
 
         // Log 10 messages and ensure all go to callback
-        int expected = 10;
-        for (int i = 0; i < expected; i++)
+        const std::size_t expected = 10;
+        for (std::size_t i = 0; i < expected; i++)
         {
             LOG_INFO(LOGCALLBACK(zk), "%s #%d", __FUNCTION__, i);
         }
@@ -1370,7 +1482,7 @@ public:
     }
 
     void testRemoveWatchers() {
-      char *path = "/something";
+      const char *path = "/something";
       char buf[1024];
       int blen = sizeof(buf);		
       int rc;

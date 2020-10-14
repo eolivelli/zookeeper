@@ -26,6 +26,8 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
+import java.nio.channels.UnresolvedAddressException;
+import java.nio.channels.UnsupportedAddressTypeException;
 import java.util.Iterator;
 import java.util.Queue;
 import java.util.Set;
@@ -176,7 +178,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
             } else {
                 // Non-priming packet: defer it until later, leaving it in the queue
                 // until authentication completes.
-                LOG.debug("deferring non-priming packet {} until SASL authentation completes.", p);
+                LOG.debug("Deferring non-priming packet {} until SASL authentication completes.", p);
             }
         }
         return null;
@@ -219,9 +221,15 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
     @Override
     void close() {
         try {
-            LOG.trace("Doing client selector close");
+            if (LOG.isTraceEnabled()) {
+                LOG.trace("Doing client selector close");
+            }
+
             selector.close();
-            LOG.trace("Closed client selector");
+
+            if (LOG.isTraceEnabled()) {
+                LOG.trace("Closed client selector");
+            }
         } catch (IOException e) {
             LOG.warn("Ignoring exception during selector close", e);
         }
@@ -260,8 +268,8 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         SocketChannel sock = createSock();
         try {
             registerAndConnect(sock, addr);
-        } catch (IOException e) {
-            LOG.error("Unable to open socket to " + addr);
+        } catch (UnresolvedAddressException | UnsupportedAddressTypeException | SecurityException | IOException e) {
+            LOG.error("Unable to open socket to {}", addr);
             sock.close();
             throw e;
         }
